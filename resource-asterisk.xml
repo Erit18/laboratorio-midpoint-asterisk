@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    resource-asterisk.xml
+    Recurso midPoint tipo "Scripted SQL" para la BD asterisk.
+    Importar en: midPoint GUI → Resources → Import Resource → seleccionar este archivo.
+    
+    Flujo:
+      1. midPoint lee la tabla `users` en la BD `asterisk`
+      2. Cuando un usuario tiene role = 'AgenteCallCenter'
+         midPoint ejecuta el script Groovy (provision-sip.groovy) que inserta
+         filas en ps_endpoints, ps_auths, ps_aors.
+-->
+<resource xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
+          xmlns:c="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
+          xmlns:q="http://prism.evolveum.com/xml/ns/public/query-3"
+          xmlns:icfs="http://midpoint.evolveum.com/xml/ns/public/connector/icf-1/resource-schema-3"
+          xmlns:ri="http://midpoint.evolveum.com/xml/ns/public/resource/instance-3"
+          xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          oid="c0c010c0-d34d-b33f-f00d-111111111111">
+
+    <name>Asterisk PBX (MariaDB - SIP Provisioning)</name>
+    <description>
+        Recurso que conecta midPoint con la base de datos MariaDB de Asterisk.
+        Provisiona automáticamente cuentas SIP cuando se asigna el rol AgenteCallCenter.
+    </description>
+
+    <!-- ============================================================
+         Conector: Script SQL via JDBC con MariaDB
+         El JAR mariadb-java-client-3.1.4.jar debe estar en
+         /opt/midpoint/var/icf-connectors/
+    ============================================================ -->
+    <connectorRef type="ConnectorType">
+        <filter>
+            <q:equal>
+                <q:path>c:connectorType</q:path>
+                <q:value>org.forgerock.openicf.connectors.scriptedsql.ScriptedSQLConnector</q:value>
+            </q:equal>
+        </filter>
+    </connectorRef>
+
+    <connectorConfiguration
+        xmlns:icfc="http://midpoint.evolveum.com/xml/ns/public/connector/icf-1/connector-schema-3">
+
+        <icfc:configurationProperties
+            xmlns:gen="http://midpoint.evolveum.com/xml/ns/public/connector/icf-1/bundle/org.forgerock.openicf.connectors.scriptedsql-connector/org.forgerock.openicf.connectors.scriptedsql.ScriptedSQLConnector">
+
+            <!-- Conexión JDBC a MariaDB (contenedor mariadb_server en la red telecom_net) -->
+            <gen:jdbcDriver>org.mariadb.jdbc.Driver</gen:jdbcDriver>
+            <gen:jdbcUrlTemplate>jdbc:mariadb://mariadb_server:3306/asterisk</gen:jdbcUrlTemplate>
+            <gen:username>root</gen:username>
+            <gen:password><clearValue>root</clearValue></gen:password>
+
+            <!-- Rutas a los scripts Groovy de aprovisionamiento -->
+            <gen:scriptRoots>/opt/midpoint/var/scripts</gen:scriptRoots>
+
+            <!-- Script principal que define CREATE/UPDATE/DELETE de cuentas SIP -->
+            <gen:createScriptFileName>provision-sip.groovy</gen:createScriptFileName>
+            <gen:updateScriptFileName>provision-sip.groovy</gen:updateScriptFileName>
+            <gen:deleteScriptFileName>deprovision-sip.groovy</gen:deleteScriptFileName>
+            <gen:searchScriptFileName>search-users.groovy</gen:searchScriptFileName>
+        </icfc:configurationProperties>
+    </connectorConfiguration>
+
+    <!-- ============================================================
+         Esquema de objetos — La "cuenta" en Asterisk es una extensión SIP
+    ============================================================ -->
+    <schemaHandling>
+        <objectType>
+            <kind>account</kind>
+            <intent>default</intent>
+            <displayName>Extensión SIP Asterisk</displayName>
+            <default>true</default>
+
+            <objectClass>ri:AccountObjectClass</objectClass>
+
+            <!-- Atributos mapeados desde midPoint al recurso (MariaDB) -->
+            <attribute>
+                <ref>icfs:name</ref>
+                <displayName>Extension (username)</displayName>
+                <outbound>
+                    <source>
+                        <path>$user/extension</path>
+                    </source>
+                </outbound>
+            </attribute>
+
+            <attribute>
+                <ref>ri:password</ref>
+                <displayName>SIP Password</displayName>
+                <outbound>
+                    <source>
+                        <path>$user/credentials/password/value</path>
+                    </source>
+                </outbound>
+            </attribute>
+
+            <attribute>
+                <ref>ri:context</ref>
+                <displayName>Dialplan Context</displayName>
+                <outbound>
+                    <value>default</value>
+                </outbound>
+            </attribute>
+
+            <!-- Activación: cuenta SIP activa si el usuario midPoint está habilitado -->
+            <activation>
+                <administrativeStatus>
+                    <outbound/>
+                </administrativeStatus>
+            </activation>
+        </objectType>
+    </schemaHandling>
+
+    <!-- ============================================================
+         Política de sincronización: leer usuarios de la tabla `users`
+    ============================================================ -->
+    <synchronization>
+        <objectSynchronization>
+            <name>Sincronización Agentes Call Center</name>
+            <objectClass>ri:AccountObjectClass</objectClass>
+            <enabled>true</enabled>
+            <condition>
+                <!-- Solo aprovisionar si el usuario tiene rol AgenteCallCenter -->
+                <script>
+                    <code>
+                        import com.evolveum.midpoint.xml.ns._public.common.common_3.UserType
+                        def user = (UserType) focus
+                        return user?.roleMembershipRef?.any { it.targetName?.orig == 'AgenteCallCenter' }
+                    </code>
+                </script>
+            </condition>
+            <correlation>
+                <q:equal>
+                    <q:path>c:name</q:path>
+                    <expression>
+                        <path>$account/attributes/icfs:name</path>
+                    </expression>
+                </q:equal>
+            </correlation>
+            <reaction>
+                <situation>linked</situation>
+                <action><handlerUri>http://midpoint.evolveum.com/xml/ns/public/model/action-3#modifyUser</handlerUri></action>
+            </reaction>
+            <reaction>
+                <situation>deleted</situation>
+                <action><handlerUri>http://midpoint.evolveum.com/xml/ns/public/model/action-3#deleteShadow</handlerUri></action>
+            </reaction>
+            <reaction>
+                <situation>unlinked</situation>
+                <action><handlerUri>http://midpoint.evolveum.com/xml/ns/public/model/action-3#link</handlerUri></action>
+            </reaction>
+            <reaction>
+                <situation>unmatched</situation>
+                <action><handlerUri>http://midpoint.evolveum.com/xml/ns/public/model/action-3#addUser</handlerUri></action>
+            </reaction>
+        </objectSynchronization>
+    </synchronization>
+
+</resource>

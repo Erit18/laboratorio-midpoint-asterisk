@@ -1,0 +1,65 @@
+version: '3.8'
+
+networks:
+  telecom_net:
+    driver: bridge
+
+services:
+  # Base de Datos MariaDB para Asterisk y midPoint
+  mariadb_server:
+    image: mariadb:10.6
+    container_name: mariadb_server
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: josephdb
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - telecom_net
+    restart: always
+
+  # Servidor de Telefonía Asterisk
+  asterisk:
+    build:
+      context: .
+      dockerfile: Dockerfile.asterisk
+    image: asterisk-custom:latest
+    container_name: asterisk_pbx
+    volumes:
+      - asterisk_data:/etc/asterisk
+      - ./res_config_mysql.conf:/etc/asterisk/res_config_mysql.conf
+      - ./extconfig.conf:/etc/asterisk/extconfig.conf
+      - ./res_odbc.conf:/etc/asterisk/res_odbc.conf
+      - ./pjsip.conf:/etc/asterisk/pjsip.conf
+      - ./sorcery.conf:/etc/asterisk/sorcery.conf
+      - ./extensions.conf:/etc/asterisk/extensions.conf
+    ports:
+      - "5060:5060/udp"
+      - "10000-10100:10000-10100/udp"
+    networks:
+      - telecom_net
+    depends_on:
+      - mariadb_server
+    restart: always
+
+  # Servidor de Identidades midPoint
+  midpoint:
+    image: evolveum/midpoint:4.8
+    container_name: midpoint_server
+    ports:
+      - "8080:8080"
+    volumes:
+      - midpoint_data:/opt/midpoint/var
+    networks:
+      - telecom_net
+    depends_on:
+      - mariadb_server
+    restart: always
+
+volumes:
+  asterisk_data:
+  mariadb_data:
+  midpoint_data:

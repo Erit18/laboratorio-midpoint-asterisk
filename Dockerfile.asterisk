@@ -1,0 +1,25 @@
+FROM andrius/asterisk:latest
+
+# Instalar driver ODBC para MariaDB
+RUN apt-get update && apt-get install -y \
+    unixodbc \
+    unixodbc-dev \
+    libmariadb-dev \
+    odbc-mariadb \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configurar el driver ODBC
+RUN echo "[MariaDB]\n\
+Description = MariaDB ODBC Driver\n\
+Driver = /usr/lib/x86_64-linux-gnu/odbc/libmaodbc.so\n\
+FileUsage = 1" > /etc/odbcinst.ini
+
+# Configurar la conexión ODBC a MariaDB
+RUN echo "[asterisk-connector]\n\
+Description = Asterisk MariaDB Connection\n\
+Driver = MariaDB\n\
+Server = mariadb_server\n\
+Database = asterisk\n\
+UserName = root\n\
+Password = root\n\
+Port = 3306" > /etc/odbc.ini
