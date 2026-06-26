@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgres:14
+    container_name: callcenter-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: callcenter_user
+      POSTGRES_PASSWORD: callcenter_pass123
+      POSTGRES_DB: callcenter
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - callcenter_net
+
+  midpoint:
+    image: evolveum/midpoint:latest
+    container_name: callcenter-midpoint
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      - MP_SET_midpoint_repository_database=postgresql
+      - MP_SET_midpoint_repository_jdbcUrl=jdbc:postgresql://db:5432/callcenter
+      - MP_SET_midpoint_repository_jdbcUsername=callcenter_user
+      - MP_SET_midpoint_repository_jdbcPassword=callcenter_pass123
+      - MP_SET_midpoint_repository_missingSchemaAction=create
+    ports:
+      - "8080:8080"
+    volumes:
+      - midpoint_home:/opt/midpoint/var
+    networks:
+      - callcenter_net
+
+  asterisk:
+    image: andrius/asterisk:latest
+    container_name: callcenter-asterisk
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - db
+    volumes:
+      - ./asterisk/config:/etc/asterisk
+      - ./asterisk/grabaciones:/var/spool/asterisk/monitor
+      - ./asterisk/registros_cdr:/var/log/asterisk/cdr-csv
+
+networks:
+  callcenter_net:
+    driver: bridge
+
+volumes:
+  db_data:
+  midpoint_home:
