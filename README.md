@@ -1,11 +1,11 @@
-# [cite_start]Laboratorio de Integración de Sistemas: Infraestructura Unificada de Comunicaciones y Gestión de Identidad [cite: 1, 2]
+# Laboratorio de Integración de Sistemas: Infraestructura Unificada de Comunicaciones y Gestión de Identidad
 
-[cite_start]Este proyecto implementa una arquitectura de microservicios [cite: 11] utilizando contenedores para integrar una central telefónica y un gestor de identidades corporativo.
+Este proyecto implementa una arquitectura de microservicios utilizando contenedores para integrar una central telefónica y un gestor de identidades corporativo.
 
 ## 🚀 Tecnologías Utilizadas
-* [cite_start]**Orquestación:** Docker y Docker Compose[cite: 12].
-* [cite_start]**Motor de Comunicación:** Asterisk (PBX)[cite: 12].
-* [cite_start]**Gestión de Identidad (IAM):** midPoint[cite: 12].
+* **Orquestación:** Docker y Docker Compose.
+* **Motor de Comunicación:** Asterisk (PBX).
+* **Gestión de Identidad (IAM):** midPoint.
 * **Base de Datos:** PostgreSQL.
 
 ---
@@ -28,14 +28,14 @@ El flujo de aprovisionamiento automatiza la creación de usuarios desde la lógi
 Este script configurará las credenciales SIP, actualizará el Dialplan (Enrutamiento) con políticas de grabación, y recargará el motor SIP de Asterisk en caliente.
 
 ### 3. Prueba de Concepto (Llamada y Evidencias)
-1. [cite_start]Abre tu Softphone (ej. Zoiper o MicroSIP)[cite: 87].
-2. [cite_start]Configura tu cuenta apuntando a la IP local de tu máquina usando el puerto **5060 (UDP)**[cite: 88, 89].
-3. Realiza una llamada entre las dos extensiones creadas (ej. del 1001 al 1002). [cite_start]**Contesta la llamada** y luego cuelga[cite: 90, 101].
+1. Abre tu Softphone (ej. Zoiper o MicroSIP).
+2. Configura tu cuenta apuntando a la IP local de tu máquina usando el puerto **5060 (UDP)**.
+3. Realiza una llamada entre las dos extensiones creadas (ej. del 1001 al 1002). **Contesta la llamada** y luego cuelga.
 
 ### 4. Extracción de Evidencias (CDRs y Grabaciones)
 Al colgar la llamada, el contenedor de Asterisk exportará automáticamente los datos a tu sistema anfitrión:
 * **Grabación de la llamada:** Revisa la carpeta local \`asterisk/grabaciones/\` para escuchar el archivo \`.wav\`.
-* [cite_start]**CDRs (Registros de Detalle de Llamadas):** Revisa la carpeta local \`asterisk/registros_cdr/\` y abre el archivo \`Master.csv\` para ver la fecha, hora, duración y estado de la llamada[cite: 20].
+* **CDRs (Registros de Detalle de Llamadas):** Revisa la carpeta local \`asterisk/registros_cdr/\` y abre el archivo \`Master.csv\` para ver la fecha, hora, duración y estado de la llamada.
 
 ### 5. Auditoría de Seguridad (ISO 27001)
 Puedes acceder al panel web de midPoint ingresando a \`http://localhost:8080\` (o la IP de tu máquina). El sistema cuenta con logs de auditoría en la sección de reportes para garantizar la trazabilidad de accesos.
