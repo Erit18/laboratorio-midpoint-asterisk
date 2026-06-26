@@ -45,6 +45,21 @@ services:
       - ./asterisk/grabaciones:/var/spool/asterisk/monitor
       - ./asterisk/registros_cdr:/var/log/asterisk/cdr-csv
 
+  cdr-panel:
+    build: ./cdr-panel
+    container_name: callcenter-cdr-panel
+    restart: unless-stopped
+    environment:
+      - CDR_DIR=/data/cdr
+      - RECORDINGS_DIR=/data/grabaciones
+    ports:
+      - "8088:5000"
+    volumes:
+      - ./asterisk/registros_cdr:/data/cdr:ro
+      - ./asterisk/grabaciones:/data/grabaciones:ro
+    networks:
+      - callcenter_net
+
 networks:
   callcenter_net:
     driver: bridge

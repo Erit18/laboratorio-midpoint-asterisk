@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Registro de Llamadas — Callcenter PBX</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="dot" id="live-dot"></span>
+      <span class="brand-name">CALLCENTER&nbsp;<strong>PBX</strong></span>
+      <span class="brand-sub">/ Registro de llamadas (CDR)</span>
+    </div>
+    <div class="topbar-meta">
+      <span id="clock">--:--:--</span>
+    </div>
+  </header>
+
+  <main class="layout">
+
+    <section class="stats">
+      <div class="stat-card">
+        <div class="stat-label">Llamadas totales</div>
+        <div class="stat-value" id="stat-total">0</div>
+      </div>
+      <div class="stat-card stat-ok">
+        <div class="stat-label">Contestadas</div>
+        <div class="stat-value" id="stat-answered">0</div>
+      </div>
+      <div class="stat-card stat-warn">
+        <div class="stat-label">Sin respuesta</div>
+        <div class="stat-value" id="stat-noanswer">0</div>
+      </div>
+      <div class="stat-card stat-bad">
+        <div class="stat-label">Fallidas</div>
+        <div class="stat-value" id="stat-failed">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Tiempo total en línea</div>
+        <div class="stat-value mono" id="stat-duration">00:00:00</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h1>Historial de llamadas</h1>
+        <div class="filters">
+          <input type="text" id="filter-src" placeholder="Filtrar por anexo (ej. 1001)">
+          <input type="date" id="filter-date">
+          <select id="filter-disposition">
+            <option value="">Todos los estados</option>
+            <option value="ANSWERED">Contestada</option>
+            <option value="NO ANSWER">Sin respuesta</option>
+            <option value="FAILED">Fallida</option>
+            <option value="BUSY">Ocupado</option>
+          </select>
+          <button id="btn-refresh" title="Actualizar">⟳ Actualizar</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table id="cdr-table">
+          <thead>
+            <tr>
+              <th>Fecha / hora</th>
+              <th>Origen</th>
+              <th>Destino</th>
+              <th>Duración</th>
+              <th>Estado</th>
+              <th>Grabación</th>
+            </tr>
+          </thead>
+          <tbody id="cdr-tbody">
+            <tr class="empty-row">
+              <td colspan="6">Cargando registros…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <div class="player-bar" id="player-bar">
+    <div class="player-info">
+      <span class="player-label">Reproduciendo</span>
+      <span class="player-file" id="player-file">—</span>
+    </div>
+    <audio id="audio-player" controls></audio>
+    <button id="player-close" title="Cerrar">✕</button>
+  </div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

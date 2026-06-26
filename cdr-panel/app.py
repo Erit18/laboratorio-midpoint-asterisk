@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""
+Panel de Registro de Llamadas (CDR) - Callcenter Demo
+Lee el Master.csv generado por el módulo cdr_csv de Asterisk
+y expone una API + interfaz web para listar y reproducir grabaciones.
+
+Formato estándar de Master.csv (Asterisk, cdr_csv por defecto):
+accountcode, src, dst, dcontext, clid, channel, dstchannel,
+lastapp, lastdata, start, answer, end, duration, billsec,
+disposition, amaflags, uniqueid, userfield
+"""
+
+import csv
+import io
+import os
+from datetime import datetime
+
+from flask import Flask, jsonify, render_template, send_from_directory, abort, request
+
+app = Flask(__name__)
+
+CDR_DIR = os.environ.get("CDR_DIR", "/data/cdr")
+RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/data/grabaciones")
+MASTER_CSV = os.path.join(CDR_DIR, "Master.csv")
+
+CDR_FIELDS = [
+    "accountcode", "src", "dst", "dcontext", "clid", "channel",
+    "dstchannel", "lastapp", "lastdata", "start", "answer", "end",
+    "duration", "billsec", "disposition", "amaflags", "uniqueid", "userfield",
+]
+
+
+def parse_master_csv():
+    """Lee Master.csv (sin cabecera, formato fijo de Asterisk) y devuelve
+    una lista de diccionarios, más reciente primero."""
+    rows = []
+    if not os.path.exists(MASTER_CSV):
+        return rows
+
+    with open(MASTER_CSV, newline="", encoding="utf-8", errors="replace") as f:
+        reader = csv.reader(f)
+        for raw in reader:
+            if not raw or len(raw) < len(CDR_FIELDS):
+                continue
+            record = dict(zip(CDR_FIELDS, raw))
+            record["recording_file"] = find_recording_for(record)
+            rows.append(record)
+
+    rows.reverse()
+    return rows
+
+
+def find_recording_for(record):
+    """Intenta emparejar el registro CDR con un archivo .wav de grabación.
+    El dialplan generado por sync_asterisk.sh coloca MixMonitor() en la
+    extensión que RECIBE la llamada, así que el archivo se nombra con el
+    prefijo de 'dst' (destino), no de 'src' (origen). Se prueban ambos
+    por robustez, priorizando dst ya que es el caso real observado.
+    Solo se considera coincidencia válida si el prefijo de tiempo
+    (YYYYmmdd-HHMM) también coincide; evita falsos positivos."""
+    if not os.path.isdir(RECORDINGS_DIR):
+        return None
+
+    start_raw = record.get("start", "")
+    try:
+        dt = datetime.strptime(start_raw, "%Y-%m-%d %H:%M:%S")
+        stamp = dt.strftime("%Y%m%d-%H%M")
+    except ValueError:
+        return None
+
+    try:
+        candidates = os.listdir(RECORDINGS_DIR)
+    except OSError:
+        return None
+
+    for ext_field in ("dst", "src"):
+        ext = record.get(ext_field, "")
+        if not ext:
+            continue
+        for fname in candidates:
+            if fname.startswith(f"{ext}-{stamp}"):
+                return fname
+
+    return None
+
+
+def compute_stats(rows):
+    total = len(rows)
+    answered = sum(1 for r in rows if r.get("disposition") == "ANSWERED")
+    no_answer = sum(1 for r in rows if r.get("disposition") == "NO ANSWER")
+    failed = sum(1 for r in rows if r.get("disposition") in ("FAILED", "BUSY"))
+    total_billsec = sum(int(r.get("billsec") or 0) for r in rows)
+    return {
+        "total": total,
+        "answered": answered,
+        "no_answer": no_answer,
+        "failed": failed,
+        "total_billsec": total_billsec,
+    }
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/api/cdr")
+def api_cdr():
+    rows = parse_master_csv()
+
+    src_filter = request.args.get("src", "").strip()
+    date_filter = request.args.get("date", "").strip()
+    disposition_filter = request.args.get("disposition", "").strip()
+
+    if src_filter:
+        rows = [r for r in rows if src_filter in r.get("src", "") or src_filter in r.get("dst", "")]
+    if date_filter:
+        rows = [r for r in rows if r.get("start", "").startswith(date_filter)]
+    if disposition_filter:
+        rows = [r for r in rows if r.get("disposition") == disposition_filter]
+
+    return jsonify({
+        "stats": compute_stats(rows),
+        "calls": rows,
+    })
+
+
+@app.route("/recordings/<path:filename>")
+def serve_recording(filename):
+    safe_path = os.path.normpath(os.path.join(RECORDINGS_DIR, filename))
+    if not safe_path.startswith(os.path.normpath(RECORDINGS_DIR)):
+        abort(403)
+    if not os.path.exists(safe_path):
+        abort(404)
+    return send_from_directory(RECORDINGS_DIR, filename, as_attachment=False)
+
+
+@app.route("/api/health")
+def health():
+    return jsonify({
+        "status": "ok",
+        "master_csv_found": os.path.exists(MASTER_CSV),
+        "recordings_dir_found": os.path.isdir(RECORDINGS_DIR),
+    })
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=False)
