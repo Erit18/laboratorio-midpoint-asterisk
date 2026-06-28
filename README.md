@@ -11,11 +11,38 @@ Este proyecto implementa una arquitectura de microservicios utilizando contenedo
 
 ---
 
+## 🔄 ¿Ya intentaste instalar este proyecto antes y midPoint no arrancaba?
+
+Si ya clonaste este repositorio en algún momento y `callcenter-midpoint` se quedaba reiniciándose en loop (o nunca llegaba a `healthy`), es porque las versiones anteriores de esta guía no incluían los pasos de inicialización manual que sí están documentados a partir de ahora en la sección "⚡ Instalación desde cero". El problema no era tu instalación — la documentación anterior estaba incompleta.
+
+**Antes de reinstalar, borra completamente el intento anterior** para no dejar una base de datos a medio inicializar que pueda interferir:
+
+```bash
+cd ~/laboratorio-midpoint-asterisk-main      # o el nombre que le hayas puesto a la carpeta
+docker compose down -v
+cd ~
+rm -rf laboratorio-midpoint-asterisk-main
+```
+
+El `-v` borra también los volúmenes de datos (la base de datos vieja e incompleta), y el `rm -rf` borra la carpeta del proyecto entera. Después de esto, clona de nuevo el repo y sigue la sección de abajo desde el principio, sin saltarte ningún paso:
+
+```bash
+git clone https://github.com/Erit18/laboratorio-midpoint-asterisk.git laboratorio-midpoint-asterisk-main
+cd laboratorio-midpoint-asterisk-main
+chmod +x sync_asterisk.sh
+```
+
+---
+
 ## ⚡ Instalación desde cero (clonando el repo en una máquina nueva)
 
 **Lee esto primero si es la primera vez que levantas el proyecto en esta máquina.** La imagen de Docker `evolveum/midpoint:latest` **no auto-genera su esquema de base de datos ni sus datos iniciales** (usuario `administrator`, roles, configuración del sistema). Si solo haces `docker compose up -d` sin más, midPoint se quedará en loop de reinicio o, si parece levantar, dará `500 Internal Server Error` al intentar iniciar sesión.
 
-**Importante:** estos comandos deben ejecutarse **uno por uno, copiando y pegando tal cual**, incluyendo la flag `-it`. Probamos automatizar todo esto en un script de una sola pieza y, en algunas máquinas, los pasos de `ninja.sh` se quedaban colgados indefinidamente al ejecutarse sin terminal interactiva asignada. Ejecutados manualmente con `-it`, estos mismos comandos siempre funcionan en segundos. No los metas en un script propio salvo que también uses `-it` en cada `docker exec`.
+**Importante #1:** estos comandos deben ejecutarse **uno por uno, copiando y pegando tal cual**, incluyendo la flag `-it`. Probamos automatizar todo esto en un script de una sola pieza y, en algunas máquinas, los pasos de `ninja.sh` se quedaban colgados indefinidamente al ejecutarse sin terminal interactiva asignada. Ejecutados manualmente con `-it`, estos mismos comandos siempre funcionan en segundos. No los metas en un script propio salvo que también uses `-it` en cada `docker exec`.
+
+**Importante #2:** los mensajes en pantalla de `ninja.sh` a veces no muestran su línea final ("Scripts executed successfully") aunque el comando sí haya funcionado — es un corte de buffer de la terminal, no un fallo real. **Verifica siempre contra la base de datos real** con el comando de verificación que se incluye después de cada paso, en vez de confiar solo en lo que se imprime en pantalla.
+
+**Importante #3 — Recursos de la máquina:** el Paso 4 (importación de objetos semilla) deja la VM bajo carga sostenida por mucho tiempo. Si la VM tiene poca RAM asignada (menos de 4 GB) o pocos núcleos de CPU, es posible que el sistema entre en un estado de sobrecarga severa (`watchdog: soft lockup`, pantalla congelada) hacia el final del proceso. Si esto pasa: **reinicia la VM** (no se pierde nada, los datos viven en volúmenes de Docker en disco) y verifica con `docker compose ps` — es probable que el trabajo ya se haya completado y solo haga falta el Paso 5. Antes de lanzar el Paso 4, cierra el navegador y cualquier otra aplicación pesada para darle más margen a la VM.
 
 ```bash
 docker compose up -d
@@ -29,7 +56,7 @@ docker exec -it callcenter-db psql -U callcenter_user -d callcenter -c "CREATE E
 docker exec -it callcenter-db psql -U callcenter_user -d callcenter -c "CREATE EXTENSION IF NOT EXISTS intarray;"
 ```
 
-**Paso 2 — Esquema de repositorio** (unos segundos; debe terminar con `Scripts executed successfully`):
+**Paso 2 — Esquema de repositorio:**
 ```bash
 docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh run-sql \
   --mode repository \
@@ -39,7 +66,13 @@ docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh 
   --create
 ```
 
-**Paso 3 — Esquema de auditoría** (unos segundos; este paso es fácil de olvidar y su ausencia causa un 500 específicamente al hacer login, no al arrancar):
+**Verifica que sí se creó** (debe devolver un número alto, ~94 o más; si dice "Did not find any relations" repite el Paso 2):
+```bash
+docker exec -it callcenter-db psql -U callcenter_user -d callcenter --pset pager=off -c "\dt" | wc -l
+```
+*(Si en algún momento `psql` parece "colgarse" mostrando `(END)` al final, no está colgado — es el paginador de texto esperando que presiones la tecla `q` para continuar.)*
+
+**Paso 3 — Esquema de auditoría** (este paso es fácil de olvidar y su ausencia causa un 500 específicamente al hacer login, no al arrancar):
 ```bash
 docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh run-sql \
   --mode audit \
@@ -49,9 +82,14 @@ docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh 
   --create
 ```
 
+**Verifica que sí se creó** (debe mostrar `ma_audit_event` y tablas relacionadas):
+```bash
+docker exec -it callcenter-db psql -U callcenter_user -d callcenter --pset pager=off -c "\dt" | grep audit
+```
+
 **Paso 4 — Importar los objetos semilla (roles, configuración, usuario admin, etc.)**
 
-⚠️ **Este paso tarda entre 50 minutos y 2 horas, dependiendo de qué tan rápida sea la máquina.** Es lento por diseño de la herramienta (son ~171 archivos y cada uno reinicia el contexto interno de la aplicación) — **no está colgado, déjalo correr sin interrumpirlo.** No cierres la terminal ni apagues la laptop. Ideal: lánzalo y ve a hacer otra cosa durante ese tiempo.
+⚠️ **Este paso tarda entre 50 minutos y 2 horas**, dependiendo de qué tan rápida sea la máquina (en una prueba real tardó casi 2 horas). Es lento por diseño de la herramienta (son ~171 archivos y cada uno reinicia el contexto interno de la aplicación) — **no está colgado, déjalo correr sin interrumpirlo.** No cierres la terminal. Ideal: lánzalo y ve a hacer otra cosa durante ese tiempo, idealmente sin usar la laptop para tareas pesadas en paralelo (ver "Importante #3" arriba).
 
 ```bash
 docker exec -it -w /opt/midpoint callcenter-midpoint bash -c '
@@ -62,6 +100,11 @@ done
 '
 ```
 Sabrás que terminó cuando el prompt (`$`) vuelva a aparecer solo, sin más líneas de "Importando...".
+
+Si quieres confirmar que avanza sin interrumpir el bucle, abre una **segunda terminal** y de vez en cuando corre (el número debería ir creciendo con el tiempo):
+```bash
+docker exec -it callcenter-db psql -U callcenter_user -d callcenter --pset pager=off -c "SELECT COUNT(*) FROM m_object;"
+```
 
 **Paso 5 — Asignar contraseña al usuario `administrator`** (sin esto, el usuario existe pero no tiene clave y no se puede iniciar sesión):
 ```bash
@@ -104,7 +147,16 @@ docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh 
 
 **Listo.** Verifica con `docker compose ps` que `callcenter-midpoint` esté `healthy`, y entra a `http://localhost:8080` con usuario `administrator` y contraseña `Callcenter2026!` (puedes cambiar `Callcenter2026!` por otra clave en el XML del Paso 5 antes de ejecutarlo, si prefieres una distinta).
 
-**Si necesitas reiniciar todo desde cero** (por ejemplo, en otra máquina o si algo quedó a medias), borra los volúmenes primero y repite los 5 pasos:
+**Paso 6 — Crear las extensiones SIP de Asterisk**
+
+Este paso es independiente de todo lo anterior y siempre hay que hacerlo en una máquina nueva, porque el archivo `pjsip.conf` con las extensiones **no se sube al repositorio** (es contenido generado, está en `.gitignore`). Es rápido, segundos por extensión:
+```bash
+./sync_asterisk.sh 1001 clave1001
+./sync_asterisk.sh 1002 clave1002
+```
+Repite con cualquier número de extensión y contraseña que necesites.
+
+**Si necesitas reiniciar todo desde cero** (por ejemplo, en otra máquina o si algo quedó a medias), borra los volúmenes primero y repite los pasos 1 a 6:
 ```bash
 docker compose down -v
 docker compose up -d
@@ -265,11 +317,25 @@ docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh 
 docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh run-sql ...
 ```
 
+### k) La VM se congela o aparece `watchdog: BUG: soft lockup` durante el Paso 4
+Síntoma: tras dejar correr la importación de objetos semilla por un tiempo largo, la pantalla de la VM se queda fija y/o muestra mensajes en amarillo tipo `watchdog: soft lockup - CPU#0 stuck for Xs`.
+
+**Causa:** la VM se quedó sin recursos suficientes (CPU y/o RAM) bajo la carga sostenida de Docker + Java + Postgres corriendo por mucho tiempo. No es un error del proyecto ni de los comandos — es el sistema operativo de la VM literalmente sin capacidad de seguir respondiendo.
+
+**Solución:** reinicia la VM. Los datos no se pierden porque viven en volúmenes de Docker en disco, no en memoria — al reiniciar, `docker compose ps` puede incluso mostrar que el trabajo ya había terminado y los contenedores vuelven a `healthy` solos. Si vuelve a pasar seguido, asigna más RAM/CPU a la VM desde la configuración de VirtualBox, y cierra el navegador y otras aplicaciones pesadas antes de lanzar el Paso 4.
+
+### l) Los mensajes de `ninja.sh` en pantalla no muestran la línea final aunque el comando funcionó
+Síntoma: el output de `run-sql` se corta justo después de "Executing script ..." sin mostrar "Scripts executed successfully", y parece que falló.
+
+**Causa:** corte de buffer/timing de la terminal al mostrar el output de un proceso Java vía `docker exec`. No siempre refleja si el comando realmente terminó bien o mal.
+
+**Solución:** nunca asumas éxito o fallo solo por el mensaje en pantalla — verifica siempre contra la base de datos real con `\dt` (ver los pasos de verificación en "Instalación desde cero" arriba).
+
 ---
 
 ## ✅ 8. Checklist rápido para el día de la demostración
 
-**Si es la primera vez en esta máquina:** completa los 5 pasos de "Instalación desde cero" arriba antes de todo lo siguiente. Hazlo con tiempo de sobra — el Paso 4 puede tardar entre 50 minutos y 2 horas, y no se puede interrumpir.
+**Si es la primera vez en esta máquina:** completa los 6 pasos de "Instalación desde cero" arriba antes de todo lo siguiente. Hazlo con tiempo de sobra — el Paso 4 puede tardar entre 50 minutos y 2 horas, y no se puede interrumpir. Este flujo fue probado de punta a punta (incluyendo llamada real y panel CDR) en una máquina nueva.
 
 1. `docker compose up -d` y espera 3-5 min a que midPoint termine de iniciar.
 2. `docker compose ps` → confirma que los 4 contenedores estén `Up` (`db`, `midpoint`, `asterisk`, `cdr-panel`), y que `midpoint` diga `healthy` (no `unhealthy` ni reiniciándose).
