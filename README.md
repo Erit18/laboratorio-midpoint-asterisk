@@ -256,12 +256,22 @@ WARNING: find_registrar_aor: AOR '' not found for endpoint '1001'
 
 **Solución ya aplicada en `sync_asterisk.sh`:** el bloque `type=aor` usa el mismo nombre de sección que el `type=endpoint` (ej. ambos se llaman `[1001]`). Es válido tener dos bloques con el mismo nombre en `pjsip.conf` siempre que su `type=` sea diferente.
 
-### d) Zoiper/softphone en Windows no encuentra la central
-Verifica que la VM esté en red **Bridged** (no NAT puro de VirtualBox) para que el host (Windows) pueda alcanzar la IP de la VM directamente. Confirma la IP de la VM con:
+### d) Zoiper/softphone no encuentra la central — o "funcionaba en una red y en otra no"
+**La IP que pones en Zoiper (Dominio/Host) NO es un valor fijo del proyecto — es la IP local de la laptop donde corre Asterisk en ESE momento, y cambia cada vez que esa laptop se conecta a una red WiFi distinta.** Si configuraste Zoiper en casa y luego llevas la laptop a la universidad (u otra red), la IP vieja ya no sirve.
+
+**Antes de cada sesión de pruebas, en una red nueva, vuelve a verificar la IP:**
 ```bash
 ip addr show | grep "inet " | grep -v 127.0.0.1
 ```
-Asterisk corre con `network_mode: host`, así que escucha directo en la IP de la VM (ej. `192.168.x.x`), puerto **5060 UDP**.
+Usa el resultado (típicamente algo como `192.168.x.x`) como Dominio/Host en cada softphone, actualizando la configuración si cambió respecto a la última vez.
+
+También verifica que la VM esté en red **Bridged** (no NAT puro de VirtualBox) para que otros dispositivos de la misma red puedan alcanzarla. Asterisk corre con `network_mode: host`, así que escucha directo en la IP de la VM, puerto **5060 UDP**.
+
+**⚠️ Redes institucionales (universidad, oficina, WiFi de eventos):** muchas de estas redes tienen activado el **"aislamiento de clientes"** (client/AP isolation), una medida de seguridad que impide que dos dispositivos conectados al mismo WiFi se comuniquen directamente entre sí — aunque ambos tengan IP válida y estén en la misma red. Si esto está activo, el celular (o cualquier otro dispositivo) **nunca podrá alcanzar la laptop con Asterisk**, sin importar que la configuración de Zoiper sea correcta. Esto no es un error del proyecto ni de la configuración — es una política de red fuera de nuestro control.
+
+**Recomendación:** prueba la conectividad entre dispositivos en la red de la universidad **con anticipación**, no justo antes de la demo. Si detectas que el aislamiento de clientes está activo y no se puede desactivar:
+- Usa **dos softphones en la misma laptop** (instala un segundo cliente SIP, o usa la misma extensión registrada dos veces si el `max_contacts` lo permite), o
+- Crea un **hotspot/punto de acceso propio** desde el celular o la laptop y conecta ambos dispositivos a esa red en vez de a la de la universidad.
 
 ### e) El panel CDR muestra "sin audio" aunque la llamada sí se grabó
 Ver el detalle del punto 6 ("Cómo funciona internamente") sobre el emparejamiento por `dst` en vez de `src`. Si el problema persiste, confirma que el nombre del archivo `.wav` realmente coincide en minuto exacto con el campo `start` del CDR (`ls asterisk/grabaciones/`).
@@ -336,6 +346,8 @@ Síntoma: el output de `run-sql` se corta justo después de "Executing script ..
 ## ✅ 8. Checklist rápido para el día de la demostración
 
 **Si es la primera vez en esta máquina:** completa los 6 pasos de "Instalación desde cero" arriba antes de todo lo siguiente. Hazlo con tiempo de sobra — el Paso 4 puede tardar entre 50 minutos y 2 horas, y no se puede interrumpir. Este flujo fue probado de punta a punta (incluyendo llamada real y panel CDR) en una máquina nueva.
+
+**⚠️ Si vas a presentar en una red distinta a la que usaste para probar (ej. WiFi de la universidad en vez de tu casa):** verifica la conectividad entre dispositivos **con anticipación**, no el mismo día. La IP cambia con la red (ver punto "d" de Problemas Conocidos) y algunas redes institucionales bloquean la comunicación directa entre dispositivos conectados al mismo WiFi.
 
 1. `docker compose up -d` y espera 3-5 min a que midPoint termine de iniciar.
 2. `docker compose ps` → confirma que los 4 contenedores estén `Up` (`db`, `midpoint`, `asterisk`, `cdr-panel`), y que `midpoint` diga `healthy` (no `unhealthy` ni reiniciándose).
