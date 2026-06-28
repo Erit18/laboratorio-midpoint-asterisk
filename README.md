@@ -13,41 +13,108 @@ Este proyecto implementa una arquitectura de microservicios utilizando contenedo
 
 ## ⚡ Instalación desde cero (clonando el repo en una máquina nueva)
 
-**Lee esto primero si es la primera vez que levantas el proyecto en esta máquina.** La imagen de Docker `evolveum/midpoint:latest` **no auto-genera su esquema de base de datos ni sus datos iniciales** (usuario `administrator`, roles, configuración del sistema). Si solo haces `docker compose up -d` sin más, midPoint se quedará en loop de reinicio o, si parece levantar, dará `500 Internal Server Error` al intentar iniciar sesión. Esto nos tomó varias horas de debugging la primera vez — el script `init_midpoint.sh` automatiza todo ese proceso.
+**Lee esto primero si es la primera vez que levantas el proyecto en esta máquina.** La imagen de Docker `evolveum/midpoint:latest` **no auto-genera su esquema de base de datos ni sus datos iniciales** (usuario `administrator`, roles, configuración del sistema). Si solo haces `docker compose up -d` sin más, midPoint se quedará en loop de reinicio o, si parece levantar, dará `500 Internal Server Error` al intentar iniciar sesión.
+
+**Importante:** estos comandos deben ejecutarse **uno por uno, copiando y pegando tal cual**, incluyendo la flag `-it`. Probamos automatizar todo esto en un script de una sola pieza y, en algunas máquinas, los pasos de `ninja.sh` se quedaban colgados indefinidamente al ejecutarse sin terminal interactiva asignada. Ejecutados manualmente con `-it`, estos mismos comandos siempre funcionan en segundos. No los metas en un script propio salvo que también uses `-it` en cada `docker exec`.
 
 ```bash
 docker compose up -d
-# Espera ~30s a que la base de datos esté healthy (docker compose ps)
-./init_midpoint.sh
+```
+Espera a que el output muestre `Container callcenter-db Healthy` (unos 8-15 segundos).
+
+**Paso 1 — Extensiones de PostgreSQL** (instantáneo):
+```bash
+docker exec -it callcenter-db psql -U callcenter_user -d callcenter -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+docker exec -it callcenter-db psql -U callcenter_user -d callcenter -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+docker exec -it callcenter-db psql -U callcenter_user -d callcenter -c "CREATE EXTENSION IF NOT EXISTS intarray;"
 ```
 
-El script hace, en orden:
-1. Crea las extensiones de PostgreSQL que midPoint necesita (`pgcrypto`, `pg_trgm`, `intarray`) — sin ellas, la creación de tablas falla en silencio.
-2. Crea el esquema de repositorio (`ninja.sh run-sql --mode repository --create`).
-3. Crea el esquema de auditoría (`ninja.sh run-sql --mode audit --create`) — **fácil de olvidar**, es un paso separado del anterior y su ausencia causa un 500 específicamente al hacer login (no al arrancar).
-4. Importa los ~171 archivos de `initial-objects` (roles, archetypes, configuración del sistema, etc.). **Esto tarda entre 15 y 50 minutos** dependiendo de qué tan rápida sea la máquina — cada importación reinicia el contexto de Spring internamente, es lento por diseño de la herramienta, no es un error.
-5. Asigna la contraseña del usuario `administrator` y lo desbloquea (el objeto semilla viene sin contraseña por política de seguridad de midPoint).
-6. Reinicia midPoint y espera a que esté `healthy`.
-
-Puedes pasar una contraseña personalizada para el administrador como argumento:
+**Paso 2 — Esquema de repositorio** (unos segundos; debe terminar con `Scripts executed successfully`):
 ```bash
-./init_midpoint.sh "MiClaveSegura123!"
+docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh run-sql \
+  --mode repository \
+  --jdbc-url jdbc:postgresql://db:5432/callcenter \
+  --jdbc-username callcenter_user \
+  --jdbc-password callcenter_pass123 \
+  --create
 ```
-Si no se especifica, usa `Callcenter2026!` por defecto.
 
-**No vuelvas a correr este script** una vez que midPoint ya esté funcionando — es solo para la primera inicialización de una base de datos vacía. Si necesitas reiniciar todo desde cero (por ejemplo, en otra máquina), borra los volúmenes primero:
+**Paso 3 — Esquema de auditoría** (unos segundos; este paso es fácil de olvidar y su ausencia causa un 500 específicamente al hacer login, no al arrancar):
 ```bash
-docker compose down
-docker volume rm laboratorio-midpoint-asterisk-main_db_data laboratorio-midpoint-asterisk-main_midpoint_home
+docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh run-sql \
+  --mode audit \
+  --jdbc-url jdbc:postgresql://db:5432/callcenter \
+  --jdbc-username callcenter_user \
+  --jdbc-password callcenter_pass123 \
+  --create
+```
+
+**Paso 4 — Importar los objetos semilla (roles, configuración, usuario admin, etc.)**
+
+⚠️ **Este paso tarda entre 50 minutos y 2 horas, dependiendo de qué tan rápida sea la máquina.** Es lento por diseño de la herramienta (son ~171 archivos y cada uno reinicia el contexto interno de la aplicación) — **no está colgado, déjalo correr sin interrumpirlo.** No cierres la terminal ni apagues la laptop. Ideal: lánzalo y ve a hacer otra cosa durante ese tiempo.
+
+```bash
+docker exec -it -w /opt/midpoint callcenter-midpoint bash -c '
+for f in $(find /opt/midpoint/doc/config/initial-objects -name "*.xml" | sort); do
+  echo "=== Importando: $(basename "$f") ==="
+  /opt/midpoint/bin/ninja.sh import -O -i "$f" 2>&1 | grep -E "Processed|ERROR"
+done
+'
+```
+Sabrás que terminó cuando el prompt (`$`) vuelva a aparecer solo, sin más líneas de "Importando...".
+
+**Paso 5 — Asignar contraseña al usuario `administrator`** (sin esto, el usuario existe pero no tiene clave y no se puede iniciar sesión):
+```bash
+docker exec -i callcenter-midpoint sh -c 'cat > /tmp/admin-fixed.xml' << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<c:objects xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
+	xmlns:c="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
+	xmlns:org="http://midpoint.evolveum.com/xml/ns/public/common/org-3">
+<user xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3" xmlns:c="http://midpoint.evolveum.com/xml/ns/public/common/common-3" xmlns:org="http://midpoint.evolveum.com/xml/ns/public/common/org-3" xmlns:t="http://prism.evolveum.com/xml/ns/public/types-3" oid="00000000-0000-0000-0000-000000000002" version="19">
+    <name>administrator</name>
+    <indestructible>true</indestructible>
+    <assignment id="1">
+        <identifier>superuserRole</identifier>
+        <targetRef oid="00000000-0000-0000-0000-000000000004" relation="org:default" type="c:RoleType"/>
+    </assignment>
+    <assignment id="2">
+        <identifier>archetype</identifier>
+        <targetRef oid="00000000-0000-0000-0000-000000000300" relation="org:default" type="c:ArchetypeType"/>
+    </assignment>
+    <activation>
+        <administrativeStatus>enabled</administrativeStatus>
+        <effectiveStatus>enabled</effectiveStatus>
+        <lockoutStatus>normal</lockoutStatus>
+    </activation>
+    <credentials>
+        <password>
+            <value>
+                <t:clearValue>Callcenter2026!</t:clearValue>
+            </value>
+        </password>
+    </credentials>
+    <fullName>midPoint Administrator</fullName>
+    <givenName>midPoint</givenName>
+    <familyName>Administrator</familyName>
+</user>
+</c:objects>
+EOF
+docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh import -O -i /tmp/admin-fixed.xml
+```
+
+**Listo.** Verifica con `docker compose ps` que `callcenter-midpoint` esté `healthy`, y entra a `http://localhost:8080` con usuario `administrator` y contraseña `Callcenter2026!` (puedes cambiar `Callcenter2026!` por otra clave en el XML del Paso 5 antes de ejecutarlo, si prefieres una distinta).
+
+**Si necesitas reiniciar todo desde cero** (por ejemplo, en otra máquina o si algo quedó a medias), borra los volúmenes primero y repite los 5 pasos:
+```bash
+docker compose down -v
 docker compose up -d
-./init_midpoint.sh
 ```
 
 ---
 
 ## 🛠️ Instrucciones de Despliegue (Para la Demostración)
 
-> Esta sección asume que ya corriste `init_midpoint.sh` al menos una vez en esta máquina, o que el volumen de base de datos ya tiene los datos semilla (por ejemplo, si nunca borraste los volúmenes desde la primera instalación).
+> Esta sección asume que ya completaste los 5 pasos de "Instalación desde cero" al menos una vez en esta máquina, o que el volumen de base de datos ya tiene los datos semilla (por ejemplo, si nunca borraste los volúmenes desde la primera instalación).
 
 ### 1. Levantar la Infraestructura
 Abre tu terminal en la carpeta del proyecto y ejecuta:
@@ -152,7 +219,7 @@ Síntoma: `docker compose ps` muestra `callcenter-midpoint` reiniciándose cada 
 
 **Causa:** a la base de datos PostgreSQL le faltan las extensiones `pgcrypto`, `pg_trgm` e `intarray`. Sin ellas, el script de creación de esquema de midPoint (`postgres.sql`) falla en crear ciertas tablas **sin lanzar un error fatal** — por eso `ninja.sh run-sql --create` reporta "Scripts executed successfully" aunque el esquema haya quedado incompleto.
 
-**Solución:** usar `./init_midpoint.sh`, que ya crea estas extensiones en su primer paso. Si necesitas hacerlo a mano:
+**Solución:** seguir el Paso 1 de "Instalación desde cero" arriba (crear las extensiones). Si necesitas hacerlo a mano:
 ```bash
 docker exec -it callcenter-db psql -U callcenter_user -d callcenter -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
 docker exec -it callcenter-db psql -U callcenter_user -d callcenter -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
@@ -164,7 +231,7 @@ Síntoma: la pantalla de login carga bien, pero al hacer clic en "Sign in" devue
 
 **Causa:** cada intento de login (exitoso o fallido) dispara un registro de auditoría. `ninja.sh run-sql --mode repository --create` solo crea las tablas del repositorio principal y de Quartz — **el esquema de auditoría es un módulo separado** que se crea con `--mode audit`, y es fácil olvidarlo porque no se nota hasta el primer login.
 
-**Solución:** usar `./init_midpoint.sh`, que ya incluye este paso. A mano:
+**Solución:** seguir el Paso 3 de "Instalación desde cero" arriba (crear el esquema de auditoría). A mano:
 ```bash
 docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh run-sql \
   --mode audit \
@@ -180,7 +247,7 @@ Síntoma: error 500 al intentar el login, incluso después de resolver los punto
 
 **Causa:** el objeto semilla `050-user-administrator.xml` no trae contraseña por diseño (midPoint normalmente la genera en un asistente de primer arranque que se omite al importar el XML directamente). Los intentos fallidos de login antes de tener contraseña configurada bloquean la cuenta.
 
-**Solución:** `./init_midpoint.sh` ya asigna una contraseña y desbloquea la cuenta en su último paso. Si necesitas hacerlo a mano, exporta el usuario, edita el XML insertando un bloque `<credentials><password><value><t:clearValue>TU_CLAVE</t:clearValue></value></password></credentials>` como **hermano** de `<activation>` (no anidado dentro), pon `<lockoutStatus>normal</lockoutStatus>`, y reimporta con `ninja.sh import -O -i archivo.xml`.
+**Solución:** seguir el Paso 5 de "Instalación desde cero" arriba, que ya asigna una contraseña y desbloquea la cuenta. Si necesitas hacerlo a mano con otro usuario, exporta el usuario, edita el XML insertando un bloque `<credentials><password><value><t:clearValue>TU_CLAVE</t:clearValue></value></password></credentials>` como **hermano** de `<activation>` (no anidado dentro), pon `<lockoutStatus>normal</lockoutStatus>`, y reimporta con `ninja.sh import -O -i archivo.xml`.
 
 ### i) Ninja da `[ERROR] Was passed main parameter '-U' but no main parameter was defined`
 **Causa:** orden incorrecto de argumentos. Las opciones generales de conexión (`-U`, `-u`, `-p`, `-v`) deben ir **antes** del nombre del subcomando (`import`, `run-sql`), y solo las opciones específicas del subcomando (`-i`, `-O`) van después. Ejemplo correcto:
@@ -202,7 +269,7 @@ docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh 
 
 ## ✅ 8. Checklist rápido para el día de la demostración
 
-**Si es la primera vez en esta máquina:** corre `./init_midpoint.sh` antes de todo lo siguiente (ver sección "Instalación desde cero" arriba). Hazlo con tiempo de sobra — puede tardar hasta 50 minutos.
+**Si es la primera vez en esta máquina:** completa los 5 pasos de "Instalación desde cero" arriba antes de todo lo siguiente. Hazlo con tiempo de sobra — el Paso 4 puede tardar entre 50 minutos y 2 horas, y no se puede interrumpir.
 
 1. `docker compose up -d` y espera 3-5 min a que midPoint termine de iniciar.
 2. `docker compose ps` → confirma que los 4 contenedores estén `Up` (`db`, `midpoint`, `asterisk`, `cdr-panel`), y que `midpoint` diga `healthy` (no `unhealthy` ni reiniciándose).
@@ -210,4 +277,4 @@ docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh 
 4. Si son extensiones nuevas, créalas con `./sync_asterisk.sh <ext> <password>`.
 5. Haz una llamada de prueba y contéstala (para generar CDR + grabación).
 6. Abre `http://localhost:8088` (o la IP de la VM) y muestra la llamada en la tabla, reproduce el audio con el botón ▶.
-7. Si el profesor pregunta por la auditoría ISO 27001, muestra los logs de midPoint en `http://localhost:8080` (usuario `administrator`, contraseña la que se configuró en `init_midpoint.sh`).
+7. Si el profesor pregunta por la auditoría ISO 27001, muestra los logs de midPoint en `http://localhost:8080` (usuario `administrator`, contraseña la configurada en el Paso 5 de "Instalación desde cero").
