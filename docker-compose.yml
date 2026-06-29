@@ -56,11 +56,14 @@ services:
     environment:
       - CDR_DIR=/data/cdr
       - RECORDINGS_DIR=/data/grabaciones
+      - SYNC_SCRIPT=/workspace/sync_asterisk.sh
     ports:
       - "8088:5000"
     volumes:
       - ./asterisk/registros_cdr:/data/cdr:ro
       - ./asterisk/grabaciones:/data/grabaciones:ro
+      - .:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - callcenter_net
 networks:

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<objects xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3">
+    <role oid="11111111-2222-3333-4444-555555555555">
+        <name>AgenteCallCenter</name>
+        <description>Rol para agentes del call center. Al asignarse, provisiona automaticamente una extension SIP en Asterisk via CDR Panel API.</description>
+    </role>
+</objects>
