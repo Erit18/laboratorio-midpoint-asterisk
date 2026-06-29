@@ -117,27 +117,28 @@ Si quieres confirmar que avanza sin interrumpir el bucle, abre una **segunda ter
 docker exec -it callcenter-db psql -U callcenter_user -d callcenter --pset pager=off -c "SELECT COUNT(*) FROM m_object;"
 ```
 
-**Paso 5 — Asignar contraseña al usuario `administrator`** (sin esto, el usuario existe pero no tiene clave y no se puede iniciar sesión):
+**Paso 5 — Asignar contraseña y rol al usuario `administrator`** (sin esto, el usuario existe pero no tiene clave ni permisos y no se puede iniciar sesión):
+
+Este comando se ejecuta en **dos partes**: primero crea el archivo XML dentro del contenedor, y luego lo importa. Ejecútalos como bloque completo:
+
 ```bash
 docker exec -i callcenter-midpoint sh -c 'cat > /tmp/admin-fixed.xml' << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
-<c:objects xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
-	xmlns:c="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
-	xmlns:org="http://midpoint.evolveum.com/xml/ns/public/common/org-3">
-<user xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3" xmlns:c="http://midpoint.evolveum.com/xml/ns/public/common/common-3" xmlns:org="http://midpoint.evolveum.com/xml/ns/public/common/org-3" xmlns:t="http://prism.evolveum.com/xml/ns/public/types-3" oid="00000000-0000-0000-0000-000000000002" version="19">
+<objects xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
+	xmlns:org="http://midpoint.evolveum.com/xml/ns/public/common/org-3"
+	xmlns:t="http://prism.evolveum.com/xml/ns/public/types-3">
+<user oid="00000000-0000-0000-0000-000000000002">
     <name>administrator</name>
-    <indestructible>true</indestructible>
-    <assignment id="1">
-        <identifier>superuserRole</identifier>
-        <targetRef oid="00000000-0000-0000-0000-000000000004" relation="org:default" type="c:RoleType"/>
-    </assignment>
-    <assignment id="2">
-        <identifier>archetype</identifier>
-        <targetRef oid="00000000-0000-0000-0000-000000000300" relation="org:default" type="c:ArchetypeType"/>
+    <fullName>midPoint Administrator</fullName>
+    <givenName>midPoint</givenName>
+    <familyName>Administrator</familyName>
+    <assignment>
+        <targetRef oid="00000000-0000-0000-0000-000000000004"
+                   type="RoleType"
+                   relation="org:default"/>
     </assignment>
     <activation>
         <administrativeStatus>enabled</administrativeStatus>
-        <effectiveStatus>enabled</effectiveStatus>
         <lockoutStatus>normal</lockoutStatus>
     </activation>
     <credentials>
@@ -147,14 +148,20 @@ docker exec -i callcenter-midpoint sh -c 'cat > /tmp/admin-fixed.xml' << 'EOF'
             </value>
         </password>
     </credentials>
-    <fullName>midPoint Administrator</fullName>
-    <givenName>midPoint</givenName>
-    <familyName>Administrator</familyName>
 </user>
-</c:objects>
+</objects>
 EOF
 docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh import -O -i /tmp/admin-fixed.xml
 ```
+
+El output debe terminar con `Processed: 1, error: 0`. Si ves `error: 1`, revisa el problema `m)` en la sección de problemas conocidos.
+
+**Verifica que el rol quedó asignado** (debe devolver `1` o más, nunca `0`):
+```bash
+docker exec -it callcenter-db psql -U callcenter_user -d callcenter --pset pager=off -c "SELECT COUNT(*) FROM m_assignment WHERE owneroid = '00000000-0000-0000-0000-000000000002';"
+```
+
+Si devuelve `0`, el usuario tiene contraseña pero no tiene rol — ver problema `m)` en problemas conocidos.
 
 **Listo.** Verifica con `docker compose ps` que `callcenter-midpoint` esté `healthy`, y entra a `http://localhost:8080` con usuario `administrator` y contraseña `Callcenter2026!` (puedes cambiar `Callcenter2026!` por otra clave en el XML del Paso 5 antes de ejecutarlo, si prefieres una distinta).
 
@@ -344,6 +351,50 @@ Síntoma: tras dejar correr la importación de objetos semilla por un tiempo lar
 **Causa:** la VM se quedó sin recursos suficientes (CPU y/o RAM) bajo la carga sostenida de Docker + Java + Postgres corriendo por mucho tiempo. No es un error del proyecto ni de los comandos — es el sistema operativo de la VM literalmente sin capacidad de seguir respondiendo.
 
 **Solución:** reinicia la VM. Los datos no se pierden porque viven en volúmenes de Docker en disco, no en memoria — al reiniciar, `docker compose ps` puede incluso mostrar que el trabajo ya había terminado y los contenedores vuelven a `healthy` solos. Si vuelve a pasar seguido, asigna más RAM/CPU a la VM desde la configuración de VirtualBox, y cierra el navegador y otras aplicaciones pesadas antes de lanzar el Paso 4.
+
+### m) Login da `Access denied. You don't have permission to access` aunque las credenciales sean correctas
+Síntoma: la pantalla de login carga bien, la contraseña es correcta, pero al hacer clic en "Sign in" aparece el banner rojo "Access denied. You don't have permission to access, please contact Identity Manager's administrators."
+
+**Causa:** el usuario `administrator` existe y tiene contraseña, pero **no tiene el rol Superuser asignado**. Esto ocurre cuando el Paso 5 se ejecutó en dos intentos separados — el primero importó solo la contraseña (sin el rol) y el segundo intentó agregar el rol pero algo falló silenciosamente. Verifica con:
+```bash
+docker exec -it callcenter-db psql -U callcenter_user -d callcenter --pset pager=off -c "SELECT COUNT(*) FROM m_assignment WHERE owneroid = '00000000-0000-0000-0000-000000000002';"
+```
+Si el resultado es `0`, el usuario no tiene rol asignado.
+
+**Solución:** reimportar el XML del Paso 5 completo (con el bloque `<assignment>` incluido). El XML correcto ya está documentado en el Paso 5 de "Instalación desde cero" — ejecútalo de nuevo con `-O` (overwrite) para sobreescribir el usuario existente:
+```bash
+docker exec -i callcenter-midpoint sh -c 'cat > /tmp/admin-fixed.xml' << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<objects xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
+	xmlns:org="http://midpoint.evolveum.com/xml/ns/public/common/org-3"
+	xmlns:t="http://prism.evolveum.com/xml/ns/public/types-3">
+<user oid="00000000-0000-0000-0000-000000000002">
+    <name>administrator</name>
+    <fullName>midPoint Administrator</fullName>
+    <givenName>midPoint</givenName>
+    <familyName>Administrator</familyName>
+    <assignment>
+        <targetRef oid="00000000-0000-0000-0000-000000000004"
+                   type="RoleType"
+                   relation="org:default"/>
+    </assignment>
+    <activation>
+        <administrativeStatus>enabled</administrativeStatus>
+        <lockoutStatus>normal</lockoutStatus>
+    </activation>
+    <credentials>
+        <password>
+            <value>
+                <t:clearValue>Callcenter2026!</t:clearValue>
+            </value>
+        </password>
+    </credentials>
+</user>
+</objects>
+EOF
+docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh import -O -i /tmp/admin-fixed.xml
+```
+Verifica que el COUNT pase de `0` a `1` y vuelve a intentar el login.
 
 ### l) Los mensajes de `ninja.sh` en pantalla no muestran la línea final aunque el comando funcionó
 Síntoma: el output de `run-sql` se corta justo después de "Executing script ..." sin mostrar "Scripts executed successfully", y parece que falló.
