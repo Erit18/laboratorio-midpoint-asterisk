@@ -32,6 +32,17 @@ cd laboratorio-midpoint-asterisk-main
 chmod +x sync_asterisk.sh
 ```
 
+**Si ya ejecutaste una versión anterior de este proyecto**, es posible que los archivos `pjsip.conf` y `extensions.conf` tengan extensiones duplicadas de instalaciones previas. Antes de reinstalar, asegúrate de limpiarlos junto con los volúmenes:
+
+```bash
+cd ~/laboratorio-midpoint-asterisk-main
+docker compose down -v
+cd ~
+rm -rf laboratorio-midpoint-asterisk-main
+```
+
+Al clonar de nuevo el repositorio, los archivos vendrán limpios y `sync_asterisk.sh` agregará las extensiones correctamente sin duplicados.
+
 ---
 
 ## ⚡ Instalación desde cero (clonando el repo en una máquina nueva)
