@@ -8,6 +8,7 @@ Este proyecto implementa una arquitectura de microservicios utilizando contenedo
 * **Gestión de Identidad (IAM):** midPoint.
 * **Base de Datos:** PostgreSQL.
 * **Panel de Evidencias (CDR):** Python + Flask, contenedorizado, con reproductor de grabaciones integrado (interfaz inspirada en el módulo "CDR Reports" de FreePBX/Issabel).
+* **Pruebas Unitarias:** pytest 8.3.5, con 20 casos de prueba sobre el módulo de aprovisionamiento SIP.
 
 ---
 
@@ -441,3 +442,30 @@ Síntoma: el output de `run-sql` se corta justo después de "Executing script ..
 6. Abre `http://localhost:8088` y muestra la llamada en la tabla, reproduce el audio con el botón ▶.
 7. Muestra auditoría ISO 27001 en `http://localhost:8080` → reportes de acceso.
 8. Para mostrar verbosidad técnica en vivo: `docker exec callcenter-asterisk asterisk -rx "core set verbose 5"` y muestra los logs durante una llamada.
+
+## 🧪 9. Pruebas Unitarias (Quality Assurance)
+
+El proyecto incluye una suite de pruebas unitarias escrita con `pytest` que valida la lógica de negocio del módulo de aprovisionamiento SIP (`/api/provision`). Las pruebas se encuentran en `tests/test_provision.py`.
+
+### Ejecutar las pruebas
+
+```bash
+pip3 install flask pytest --break-system-packages
+python3 -m pytest tests/test_provision.py -v
+```
+
+### Cobertura: 20 pruebas en 4 categorías
+
+| Categoría | Pruebas | Qué valida |
+|---|---|---|
+| Parámetros requeridos | 5 | Rechaza extensión/password vacíos o ausentes |
+| Validación de extensión | 6 | Solo acepta 3-6 dígitos numéricos |
+| Validación de contraseña | 3 | Mínimo 4 caracteres alfanuméricos |
+| Lógica de negocio | 4 | Aprovisionamiento exitoso, duplicados (409), método HTTP |
+| Endpoint de salud | 2 | Respuesta y campos de `/api/health` |
+
+### Resultado esperado
+
+20 passed
+
+Estas pruebas garantizan que el sistema rechaza correctamente entradas inválidas antes de intentar modificar la configuración de Asterisk, cumpliendo con el atributo de **Fiabilidad** de la norma ISO/IEC 25010.
