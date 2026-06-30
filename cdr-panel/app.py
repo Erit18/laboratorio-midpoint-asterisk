@@ -9,12 +9,12 @@ lastapp, lastdata, start, answer, end, duration, billsec,
 disposition, amaflags, uniqueid, userfield
 """
 import csv
-import io
 import os
 import re
 import subprocess
 from datetime import datetime
 from flask import Flask, jsonify, render_template, send_from_directory, abort, request
+
 app = Flask(__name__)
 CDR_DIR = os.environ.get("CDR_DIR", "/data/cdr")
 RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/data/grabaciones")
@@ -24,6 +24,7 @@ CDR_FIELDS = [
     "dstchannel", "lastapp", "lastdata", "start", "answer", "end",
     "duration", "billsec", "disposition", "amaflags", "uniqueid", "userfield",
 ]
+
 def parse_master_csv():
     rows = []
     if not os.path.exists(MASTER_CSV):
@@ -67,12 +68,16 @@ def compute_stats(rows):
     no_answer = sum(1 for r in rows if r.get("disposition") == "NO ANSWER")
     failed = sum(1 for r in rows if r.get("disposition") in ("FAILED", "BUSY"))
     total_billsec = sum(int(r.get("billsec") or 0) for r in rows)
+    answered_rows = [r for r in rows if r.get("disposition") == "ANSWERED"]
+    answered_billsec = sum(int(r.get("billsec") or 0) for r in answered_rows)
+    avg_billsec = round(answered_billsec / len(answered_rows)) if answered_rows else 0
     return {
         "total": total,
         "answered": answered,
         "no_answer": no_answer,
         "failed": failed,
         "total_billsec": total_billsec,
+        "avg_billsec": avg_billsec,
     }
 
 @app.route("/")
@@ -96,6 +101,27 @@ def api_cdr():
         "calls": rows,
     })
 
+@app.route("/api/endpoints")
+def api_endpoints():
+    """Devuelve las extensiones registradas en Asterisk en tiempo real."""
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "callcenter-asterisk", "asterisk", "-rx", "pjsip show endpoints"],
+            capture_output=True, text=True, timeout=10
+        )
+        endpoints = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("Endpoint:") and "Endpoint/CID" not in line:
+                parts = line.split()
+                if len(parts) >= 3:
+                    ext = parts[1].strip()
+                    status = parts[2].strip()
+                    endpoints.append({"extension": ext, "status": status})
+        return jsonify({"endpoints": endpoints, "total": len(endpoints)})
+    except Exception as e:
+        return jsonify({"endpoints": [], "total": 0, "error": str(e)}), 500
+
 @app.route("/recordings/<path:filename>")
 def serve_recording(filename):
     safe_path = os.path.normpath(os.path.join(RECORDINGS_DIR, filename))
@@ -115,7 +141,6 @@ def health():
 
 @app.route("/api/provision", methods=["POST"])
 def provision_extension():
-    import re, subprocess
     data = request.get_json(force=True, silent=True) or {}
     extension = str(data.get("extension", "")).strip()
     password = str(data.get("password", "")).strip()
@@ -129,7 +154,6 @@ def provision_extension():
     pjsip_path = "/workspace/asterisk/config/pjsip.conf"
     extensions_path = "/workspace/asterisk/config/extensions.conf"
 
-    # Verificar que no exista ya la extensión
     try:
         with open(pjsip_path, "r") as f:
             if f"[{extension}]" in f.read():
@@ -137,7 +161,6 @@ def provision_extension():
     except Exception as e:
         return jsonify({"status": "error", "message": f"Error leyendo pjsip.conf: {e}"}), 500
 
-    # Escribir en pjsip.conf
     pjsip_block = f"""
 ; ===== Extensión {extension} =====
 [{extension}]
@@ -157,7 +180,6 @@ password={password}
 type=aor
 max_contacts=1
 """
-    # Escribir en extensions.conf
     exten_block = f"""exten => {extension},1,MixMonitor({extension}-${{STRFTIME(${{EPOCH}},,%Y%m%d-%H%M%S)}}.wav)
  same => n,Dial(PJSIP/{extension},20)
  same => n,Hangup()
@@ -170,7 +192,6 @@ max_contacts=1
     except Exception as e:
         return jsonify({"status": "error", "message": f"Error escribiendo config: {e}"}), 500
 
-    # Recargar Asterisk via docker socket
     try:
         subprocess.run(
             ["docker", "exec", "callcenter-asterisk", "asterisk", "-rx", "module reload res_pjsip.so"],

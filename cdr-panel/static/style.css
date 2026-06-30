@@ -342,3 +342,56 @@ audio {
 @media (max-width: 900px) {
   .stats { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ============================================================
+   Extensiones SIP en tiempo real
+   ============================================================ */
+.badge-asterisk {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--green);
+  background: var(--green-dim);
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  letter-spacing: 0.04em;
+}
+.endpoints-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 0 8px;
+}
+.endpoints-loading {
+  color: var(--text-low);
+  font-size: 13px;
+  font-family: var(--mono);
+}
+.ep-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  min-width: 100px;
+}
+.ep-ext {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-hi);
+}
+.ep-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ep-ok   { border-color: var(--green-dim); }
+.ep-ok .ep-status   { color: var(--green); }
+.ep-off  { border-color: var(--line); }
+.ep-off .ep-status  { color: var(--text-low); }
+.ep-busy { border-color: var(--amber-dim); }
+.ep-busy .ep-status { color: var(--amber); }
+.ep-unknown .ep-status { color: var(--text-low); }

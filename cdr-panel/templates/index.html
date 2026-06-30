@@ -7,7 +7,6 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-
   <header class="topbar">
     <div class="topbar-brand">
       <span class="dot" id="live-dot"></span>
@@ -18,9 +17,7 @@
       <span id="clock">--:--:--</span>
     </div>
   </header>
-
   <main class="layout">
-
     <section class="stats">
       <div class="stat-card">
         <div class="stat-label">Llamadas totales</div>
@@ -42,6 +39,20 @@
         <div class="stat-label">Tiempo total en línea</div>
         <div class="stat-value mono" id="stat-duration">00:00:00</div>
       </div>
+      <div class="stat-card stat-ok">
+        <div class="stat-label">Duración promedio</div>
+        <div class="stat-value mono" id="stat-avg">00:00:00</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h1>Extensiones SIP activas</h1>
+        <span class="badge-asterisk">⚡ Asterisk en tiempo real</span>
+      </div>
+      <div id="endpoints-wrap" class="endpoints-grid">
+        <span class="endpoints-loading">Consultando Asterisk…</span>
+      </div>
     </section>
 
     <section class="panel">
@@ -60,7 +71,6 @@
           <button id="btn-refresh" title="Actualizar">⟳ Actualizar</button>
         </div>
       </div>
-
       <div class="table-wrap">
         <table id="cdr-table">
           <thead>
@@ -81,9 +91,7 @@
         </table>
       </div>
     </section>
-
   </main>
-
   <div class="player-bar" id="player-bar">
     <div class="player-info">
       <span class="player-label">Reproduciendo</span>
@@ -92,7 +100,75 @@
     <audio id="audio-player" controls></audio>
     <button id="player-close" title="Cerrar">✕</button>
   </div>
-
 <script src="{{ url_for('static', filename='app.js') }}"></script>
+<script>
+// ── Extensiones SIP en tiempo real ──────────────────────────────────────────
+function statusClass(s) {
+  if (!s) return 'ep-unknown';
+  s = s.toLowerCase();
+  if (s.includes('not in use') || s.includes('available')) return 'ep-ok';
+  if (s.includes('unavailable')) return 'ep-off';
+  if (s.includes('in use') || s.includes('busy')) return 'ep-busy';
+  return 'ep-unknown';
+}
+function statusLabel(s) {
+  if (!s) return 'Desconocido';
+  s = s.toLowerCase();
+  if (s.includes('not in use') || s.includes('available')) return 'Disponible';
+  if (s.includes('unavailable')) return 'Sin registrar';
+  if (s.includes('in use') || s.includes('busy')) return 'En llamada';
+  return s;
+}
+function loadEndpoints() {
+  fetch('/api/endpoints')
+    .then(r => r.json())
+    .then(data => {
+      const wrap = document.getElementById('endpoints-wrap');
+      if (!data.endpoints || data.endpoints.length === 0) {
+        wrap.innerHTML = '<span class="endpoints-loading">No hay extensiones configuradas</span>';
+        return;
+      }
+      wrap.innerHTML = data.endpoints.map(ep => `
+        <div class="ep-card ${statusClass(ep.status)}">
+          <div class="ep-ext">${ep.extension}</div>
+          <div class="ep-status">${statusLabel(ep.status)}</div>
+        </div>
+      `).join('');
+    })
+    .catch(() => {
+      document.getElementById('endpoints-wrap').innerHTML =
+        '<span class="endpoints-loading">Error consultando Asterisk</span>';
+    });
+}
+
+// ── Duración promedio ────────────────────────────────────────────────────────
+function patchStats(stats) {
+  if (stats && typeof stats.avg_billsec !== 'undefined') {
+    const avg = stats.avg_billsec;
+    const h = String(Math.floor(avg / 3600)).padStart(2, '0');
+    const m = String(Math.floor((avg % 3600) / 60)).padStart(2, '0');
+    const s = String(avg % 60).padStart(2, '0');
+    const el = document.getElementById('stat-avg');
+    if (el) el.textContent = `${h}:${m}:${s}`;
+  }
+}
+
+// Interceptar el fetch de CDR para también actualizar avg
+const _origFetch = window.fetch;
+window.fetch = function(url, opts) {
+  return _origFetch(url, opts).then(resp => {
+    if (typeof url === 'string' && url.includes('/api/cdr')) {
+      resp.clone().json().then(data => {
+        if (data && data.stats) patchStats(data.stats);
+      }).catch(() => {});
+    }
+    return resp;
+  });
+};
+
+// Cargar extensiones al inicio y cada 15 segundos
+loadEndpoints();
+setInterval(loadEndpoints, 15000);
+</script>
 </body>
 </html>
