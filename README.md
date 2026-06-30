@@ -117,28 +117,27 @@ Si quieres confirmar que avanza sin interrumpir el bucle, abre una **segunda ter
 docker exec -it callcenter-db psql -U callcenter_user -d callcenter --pset pager=off -c "SELECT COUNT(*) FROM m_object;"
 ```
 
-**Paso 5 — Asignar contraseña y rol al usuario `administrator`** (sin esto, el usuario existe pero no tiene clave ni permisos y no se puede iniciar sesión):
-
-Este comando se ejecuta en **dos partes**: primero crea el archivo XML dentro del contenedor, y luego lo importa. Ejecútalos como bloque completo:
-
+**Paso 5 — Asignar contraseña al usuario `administrator`** (sin esto, el usuario existe pero no tiene clave y no se puede iniciar sesión):
 ```bash
 docker exec -i callcenter-midpoint sh -c 'cat > /tmp/admin-fixed.xml' << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
-<objects xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
-	xmlns:org="http://midpoint.evolveum.com/xml/ns/public/common/org-3"
-	xmlns:t="http://prism.evolveum.com/xml/ns/public/types-3">
-<user oid="00000000-0000-0000-0000-000000000002">
+<c:objects xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
+	xmlns:c="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
+	xmlns:org="http://midpoint.evolveum.com/xml/ns/public/common/org-3">
+<user xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3" xmlns:c="http://midpoint.evolveum.com/xml/ns/public/common/common-3" xmlns:org="http://midpoint.evolveum.com/xml/ns/public/common/org-3" xmlns:t="http://prism.evolveum.com/xml/ns/public/types-3" oid="00000000-0000-0000-0000-000000000002" version="19">
     <name>administrator</name>
-    <fullName>midPoint Administrator</fullName>
-    <givenName>midPoint</givenName>
-    <familyName>Administrator</familyName>
-    <assignment>
-        <targetRef oid="00000000-0000-0000-0000-000000000004"
-                   type="RoleType"
-                   relation="org:default"/>
+    <indestructible>true</indestructible>
+    <assignment id="1">
+        <identifier>superuserRole</identifier>
+        <targetRef oid="00000000-0000-0000-0000-000000000004" relation="org:default" type="c:RoleType"/>
+    </assignment>
+    <assignment id="2">
+        <identifier>archetype</identifier>
+        <targetRef oid="00000000-0000-0000-0000-000000000300" relation="org:default" type="c:ArchetypeType"/>
     </assignment>
     <activation>
         <administrativeStatus>enabled</administrativeStatus>
+        <effectiveStatus>enabled</effectiveStatus>
         <lockoutStatus>normal</lockoutStatus>
     </activation>
     <credentials>
@@ -148,31 +147,39 @@ docker exec -i callcenter-midpoint sh -c 'cat > /tmp/admin-fixed.xml' << 'EOF'
             </value>
         </password>
     </credentials>
+    <fullName>midPoint Administrator</fullName>
+    <givenName>midPoint</givenName>
+    <familyName>Administrator</familyName>
 </user>
-</objects>
+</c:objects>
 EOF
 docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh import -O -i /tmp/admin-fixed.xml
 ```
 
-El output debe terminar con `Processed: 1, error: 0`. Si ves `error: 1`, revisa el problema `m)` en la sección de problemas conocidos.
-
-**Verifica que el rol quedó asignado** (debe devolver `1` o más, nunca `0`):
-```bash
-docker exec -it callcenter-db psql -U callcenter_user -d callcenter --pset pager=off -c "SELECT COUNT(*) FROM m_assignment WHERE owneroid = '00000000-0000-0000-0000-000000000002';"
-```
-
-Si devuelve `0`, el usuario tiene contraseña pero no tiene rol — ver problema `m)` en problemas conocidos.
-
 **Listo.** Verifica con `docker compose ps` que `callcenter-midpoint` esté `healthy`, y entra a `http://localhost:8080` con usuario `administrator` y contraseña `Callcenter2026!` (puedes cambiar `Callcenter2026!` por otra clave en el XML del Paso 5 antes de ejecutarlo, si prefieres una distinta).
 
-**Paso 6 — Crear las extensiones SIP de Asterisk**
+**Paso 6 — Crear las extensiones SIP base y el rol de midPoint**
 
-Este paso es independiente de todo lo anterior y siempre hay que hacerlo en una máquina nueva, porque el archivo `pjsip.conf` con las extensiones **no se sube al repositorio** (es contenido generado, está en `.gitignore`). Es rápido, segundos por extensión:
+Este paso es independiente de todo lo anterior y siempre hay que hacerlo en una máquina nueva, porque el archivo `pjsip.conf` con las extensiones **no se sube al repositorio** (es contenido generado). Es rápido, segundos por extensión:
+
 ```bash
 ./sync_asterisk.sh 1001 clave1001
 ./sync_asterisk.sh 1002 clave1002
 ```
+
 Repite con cualquier número de extensión y contraseña que necesites.
+
+**Paso 6b — Importar el rol "AgenteCallCenter" en midPoint**
+
+Este paso crea el rol en midPoint que se usará para el flujo de aprovisionamiento automático. Solo se hace una vez por instalación:
+
+```bash
+docker cp rol-agente-callcenter.xml callcenter-midpoint:/tmp/rol-agente-callcenter.xml
+docker exec -it -w /opt/midpoint callcenter-midpoint \
+  /opt/midpoint/bin/ninja.sh import -O -i /tmp/rol-agente-callcenter.xml
+```
+
+El output debe terminar con `Processed: 1, error: 0`. Verifica que el rol aparece en midPoint entrando a `http://localhost:8080` → **Roles** → **All roles** — debe aparecer "AgenteCallCenter" en la lista.
 
 **Si necesitas reiniciar todo desde cero** (por ejemplo, en otra máquina o si algo quedó a medias), borra los volúmenes primero y repite los pasos 1 a 6:
 ```bash
@@ -184,7 +191,7 @@ docker compose up -d
 
 ## 🛠️ Instrucciones de Despliegue (Para la Demostración)
 
-> Esta sección asume que ya completaste los 5 pasos de "Instalación desde cero" al menos una vez en esta máquina, o que el volumen de base de datos ya tiene los datos semilla (por ejemplo, si nunca borraste los volúmenes desde la primera instalación).
+> Esta sección asume que ya completaste los 6 pasos de "Instalación desde cero" al menos una vez en esta máquina, o que el volumen de base de datos ya tiene los datos semilla (por ejemplo, si nunca borraste los volúmenes desde la primera instalación).
 
 ### 1. Levantar la Infraestructura
 Abre tu terminal en la carpeta del proyecto y ejecuta:
@@ -193,28 +200,82 @@ docker compose up -d
 ```
 > **Nota:** midPoint es un sistema robusto en Java. Espera unos **3 a 5 minutos** hasta que termine de iniciar antes de hacer cualquier prueba.
 
-### 2. Sincronización de Usuarios (Script Puente)
-El flujo de aprovisionamiento automatiza la creación de usuarios desde la lógica de identidad hacia la configuración de Asterisk. Para registrar un nuevo agente, ejecuta el script de integración indicando la extensión y la contraseña:
+### 2. Verificar que los 4 contenedores estén activos
+```bash
+docker compose ps
+```
+Confirma que `db`, `midpoint`, `asterisk` y `cdr-panel` estén `Up` y que `midpoint` diga `(healthy)`.
+
+### 3. Flujo de Aprovisionamiento midPoint → Asterisk (Demo Principal)
+
+Este es el flujo central del proyecto — demuestra que midPoint actúa como fuente de la verdad para la gestión de identidades y que los agentes se aprovisionan automáticamente en Asterisk.
+
+**Paso A — Crear un nuevo agente en midPoint:**
+1. Abre `http://localhost:8080` y entra con `administrator` / `Callcenter2026!`
+2. Ve a **Users** → **New user**
+3. Selecciona tipo **Person**
+4. Rellena los campos:
+   - **Name:** `agente08` (username único)
+   - **Given name:** `Agente`
+   - **Family name:** `Ocho`
+   - **Telephone number:** `1008` ← este es el número de extensión SIP
+5. Ve a la pestaña **Assignments** → sub-pestaña **Role**
+6. Haz clic en el ícono de asignar → busca y selecciona **AgenteCallCenter**
+7. Haz clic en **Save**
+
+El usuario queda registrado en midPoint con el rol "AgenteCallCenter" y su número de extensión `1008`.
+
+**Paso B — Aprovisionar la extensión en Asterisk (script de integración):**
+
+En la terminal, ejecuta el script de integración indicando la extensión y la contraseña:
+```bash
+curl -s -X POST http://localhost:8088/api/provision \
+  -H "Content-Type: application/json" \
+  -d '{"extension": "1008", "password": "clave1008"}' | python3 -m json.tool
+```
+
+El output debe mostrar `"status": "ok"` y `"Extension 1008 aprovisionada y Asterisk recargado correctamente"`.
+
+**Paso C — Verificar que la extensión aparece en Asterisk:**
+```bash
+docker exec callcenter-asterisk asterisk -rx "pjsip show endpoints" | grep 1008
+```
+Debe mostrar `Endpoint: 1008  Unavailable` — la extensión está configurada y lista para recibir registro SIP.
+
+**Paso D — Verificar en PostgreSQL que el usuario está en la BD:**
+```bash
+docker exec -it callcenter-db psql -U callcenter_user -d callcenter --pset pager=off \
+  -c "SELECT nameorig, fullname, lifecyclestate FROM m_user WHERE nameorig = 'agente08';"
+```
+Confirma que el usuario existe en la base de datos con su estado activo.
+
+### 4. Sincronización de Extensiones Base (Script Directo)
+
+Para extensiones que no requieren pasar por el flujo de midPoint, puedes usar el script directamente:
 ```bash
 ./sync_asterisk.sh 1001 clave1001
 ./sync_asterisk.sh 1002 clave1002
 ```
-Este script configurará las credenciales SIP, actualizará el Dialplan (Enrutamiento) con políticas de grabación, y recargará el motor SIP de Asterisk en caliente.
+Este script configura las credenciales SIP, actualiza el dialplan con políticas de grabación y recarga el motor SIP de Asterisk en caliente.
 
-### 3. Prueba de Concepto (Llamada y Evidencias)
+### 5. Prueba de Concepto (Llamada y Evidencias)
 1. Abre tu Softphone (ej. Zoiper o MicroSIP).
 2. Configura tu cuenta apuntando a la IP local de tu máquina usando el puerto **5060 (UDP)**.
-3. Realiza una llamada entre las dos extensiones creadas (ej. del 1001 al 1002). **Contesta la llamada** y luego cuelga.
+3. Realiza una llamada entre dos extensiones (ej. del 1001 al 1002). **Contesta la llamada** y luego cuelga.
+4. Para mostrar verbosidad en vivo durante la llamada, abre una segunda terminal y ejecuta:
+```bash
+docker exec callcenter-asterisk asterisk -rx "core set verbose 5" && docker logs -f callcenter-asterisk
+```
 
-### 4. Extracción de Evidencias (CDRs y Grabaciones)
+### 6. Extracción de Evidencias (CDRs y Grabaciones)
 Al colgar la llamada, el contenedor de Asterisk exportará automáticamente los datos a tu sistema anfitrión:
 * **Grabación de la llamada:** Revisa la carpeta local `asterisk/grabaciones/` para escuchar el archivo `.wav`.
-* **CDRs (Registros de Detalle de Llamadas):** Revisa la carpeta local `asterisk/registros_cdr/` y abre el archivo `Master.csv` para ver la fecha, hora, duración y estado de la llamada.
+* **CDRs (Registros de Detalle de Llamadas):** Revisa la carpeta local `asterisk/registros_cdr/` y abre el archivo `Master.csv`.
 
-Estas evidencias también se visualizan de forma integrada en el **Panel Web de CDR** (ver sección 6) — no es necesario abrir el CSV ni buscar los .wav a mano para la demostración.
+Estas evidencias también se visualizan de forma integrada en el **Panel Web de CDR** — no es necesario abrir el CSV ni buscar los .wav a mano.
 
-### 5. Auditoría de Seguridad (ISO 27001)
-Puedes acceder al panel web de midPoint ingresando a `http://localhost:8080` (o la IP de tu máquina). El sistema cuenta con logs de auditoría en la sección de reportes para garantizar la trazabilidad de accesos.
+### 7. Auditoría de Seguridad (ISO 27001)
+Puedes acceder al panel web de midPoint ingresando a `http://localhost:8080`. El sistema cuenta con logs de auditoría en la sección de reportes para garantizar la trazabilidad de accesos y cumplir con el control A.8.16 de ISO 27001.
 
 ---
 
@@ -352,50 +413,6 @@ Síntoma: tras dejar correr la importación de objetos semilla por un tiempo lar
 
 **Solución:** reinicia la VM. Los datos no se pierden porque viven en volúmenes de Docker en disco, no en memoria — al reiniciar, `docker compose ps` puede incluso mostrar que el trabajo ya había terminado y los contenedores vuelven a `healthy` solos. Si vuelve a pasar seguido, asigna más RAM/CPU a la VM desde la configuración de VirtualBox, y cierra el navegador y otras aplicaciones pesadas antes de lanzar el Paso 4.
 
-### m) Login da `Access denied. You don't have permission to access` aunque las credenciales sean correctas
-Síntoma: la pantalla de login carga bien, la contraseña es correcta, pero al hacer clic en "Sign in" aparece el banner rojo "Access denied. You don't have permission to access, please contact Identity Manager's administrators."
-
-**Causa:** el usuario `administrator` existe y tiene contraseña, pero **no tiene el rol Superuser asignado**. Esto ocurre cuando el Paso 5 se ejecutó en dos intentos separados — el primero importó solo la contraseña (sin el rol) y el segundo intentó agregar el rol pero algo falló silenciosamente. Verifica con:
-```bash
-docker exec -it callcenter-db psql -U callcenter_user -d callcenter --pset pager=off -c "SELECT COUNT(*) FROM m_assignment WHERE owneroid = '00000000-0000-0000-0000-000000000002';"
-```
-Si el resultado es `0`, el usuario no tiene rol asignado.
-
-**Solución:** reimportar el XML del Paso 5 completo (con el bloque `<assignment>` incluido). El XML correcto ya está documentado en el Paso 5 de "Instalación desde cero" — ejecútalo de nuevo con `-O` (overwrite) para sobreescribir el usuario existente:
-```bash
-docker exec -i callcenter-midpoint sh -c 'cat > /tmp/admin-fixed.xml' << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<objects xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
-	xmlns:org="http://midpoint.evolveum.com/xml/ns/public/common/org-3"
-	xmlns:t="http://prism.evolveum.com/xml/ns/public/types-3">
-<user oid="00000000-0000-0000-0000-000000000002">
-    <name>administrator</name>
-    <fullName>midPoint Administrator</fullName>
-    <givenName>midPoint</givenName>
-    <familyName>Administrator</familyName>
-    <assignment>
-        <targetRef oid="00000000-0000-0000-0000-000000000004"
-                   type="RoleType"
-                   relation="org:default"/>
-    </assignment>
-    <activation>
-        <administrativeStatus>enabled</administrativeStatus>
-        <lockoutStatus>normal</lockoutStatus>
-    </activation>
-    <credentials>
-        <password>
-            <value>
-                <t:clearValue>Callcenter2026!</t:clearValue>
-            </value>
-        </password>
-    </credentials>
-</user>
-</objects>
-EOF
-docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh import -O -i /tmp/admin-fixed.xml
-```
-Verifica que el COUNT pase de `0` a `1` y vuelve a intentar el login.
-
 ### l) Los mensajes de `ninja.sh` en pantalla no muestran la línea final aunque el comando funcionó
 Síntoma: el output de `run-sql` se corta justo después de "Executing script ..." sin mostrar "Scripts executed successfully", y parece que falló.
 
@@ -412,9 +429,15 @@ Síntoma: el output de `run-sql` se corta justo después de "Executing script ..
 **⚠️ Si vas a presentar en una red distinta a la que usaste para probar (ej. WiFi de la universidad en vez de tu casa):** verifica la conectividad entre dispositivos **con anticipación**, no el mismo día. La IP cambia con la red (ver punto "d" de Problemas Conocidos) y algunas redes institucionales bloquean la comunicación directa entre dispositivos conectados al mismo WiFi.
 
 1. `docker compose up -d` y espera 3-5 min a que midPoint termine de iniciar.
-2. `docker compose ps` → confirma que los 4 contenedores estén `Up` (`db`, `midpoint`, `asterisk`, `cdr-panel`), y que `midpoint` diga `healthy` (no `unhealthy` ni reiniciándose).
-3. Registra 2-3 softphones (Zoiper/MicroSIP) contra la IP de la VM, puerto 5060 UDP.
-4. Si son extensiones nuevas, créalas con `./sync_asterisk.sh <ext> <password>`.
+2. `docker compose ps` → confirma que los 4 contenedores estén `Up` (`db`, `midpoint`, `asterisk`, `cdr-panel`), y que `midpoint` diga `(healthy)`.
+3. **Demo midPoint → Asterisk:**
+   - Crea un nuevo usuario en `http://localhost:8080` → Users → New user → tipo Person
+   - Llena: Name, Given name, Family name, **Telephone number = número de extensión**
+   - Assignments → Role → agrega **AgenteCallCenter** → Save
+   - En terminal: `curl -s -X POST http://localhost:8088/api/provision -H "Content-Type: application/json" -d '{"extension": "NNNN", "password": "claveNNNN"}' | python3 -m json.tool`
+   - Verifica: `docker exec callcenter-asterisk asterisk -rx "pjsip show endpoints" | grep NNNN`
+4. Registra 2-3 softphones (Zoiper/MicroSIP) contra la IP de la VM, puerto 5060 UDP.
 5. Haz una llamada de prueba y contéstala (para generar CDR + grabación).
-6. Abre `http://localhost:8088` (o la IP de la VM) y muestra la llamada en la tabla, reproduce el audio con el botón ▶.
-7. Si el profesor pregunta por la auditoría ISO 27001, muestra los logs de midPoint en `http://localhost:8080` (usuario `administrator`, contraseña la configurada en el Paso 5 de "Instalación desde cero").
+6. Abre `http://localhost:8088` y muestra la llamada en la tabla, reproduce el audio con el botón ▶.
+7. Muestra auditoría ISO 27001 en `http://localhost:8080` → reportes de acceso.
+8. Para mostrar verbosidad técnica en vivo: `docker exec callcenter-asterisk asterisk -rx "core set verbose 5"` y muestra los logs durante una llamada.
