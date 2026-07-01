@@ -159,20 +159,9 @@ docker exec -it -w /opt/midpoint callcenter-midpoint /opt/midpoint/bin/ninja.sh 
 
 **Listo.** Verifica con `docker compose ps` que `callcenter-midpoint` esté `healthy`, y entra a `http://localhost:8080` con usuario `administrator` y contraseña `Callcenter2026!` (puedes cambiar `Callcenter2026!` por otra clave en el XML del Paso 5 antes de ejecutarlo, si prefieres una distinta).
 
-**Paso 6 — Crear las extensiones SIP base y el rol de midPoint**
+**Paso 6 — Importar el rol "AgenteCallCenter" en midPoint**
 
-Este paso es independiente de todo lo anterior y siempre hay que hacerlo en una máquina nueva, porque el archivo `pjsip.conf` con las extensiones **no se sube al repositorio** (es contenido generado). Es rápido, segundos por extensión:
-
-```bash
-./sync_asterisk.sh 1001 clave1001
-./sync_asterisk.sh 1002 clave1002
-```
-
-Repite con cualquier número de extensión y contraseña que necesites.
-
-**Paso 6b — Importar el rol "AgenteCallCenter" en midPoint**
-
-Este paso crea el rol en midPoint que se usará para el flujo de aprovisionamiento automático. Solo se hace una vez por instalación:
+Este paso crea el rol que activa el aprovisionamiento automático. Cuando se asigna este rol a un usuario, midPoint llama automáticamente al endpoint `/api/provision` del panel CDR, que configura la extensión SIP en Asterisk sin intervención manual.
 
 ```bash
 docker cp rol-agente-callcenter.xml callcenter-midpoint:/tmp/rol-agente-callcenter.xml
@@ -181,6 +170,22 @@ docker exec -it -w /opt/midpoint callcenter-midpoint \
 ```
 
 El output debe terminar con `Processed: 1, error: 0`. Verifica que el rol aparece en midPoint entrando a `http://localhost:8080` → **Roles** → **All roles** — debe aparecer "AgenteCallCenter" en la lista.
+
+**Paso 7 — Importar la configuración del sistema (notifier de aprovisionamiento)**
+
+Este paso configura el notifier Groovy en midPoint que dispara automáticamente el aprovisionamiento SIP cada vez que un usuario con `telephoneNumber` recibe el rol "AgenteCallCenter". **Sin este paso, el aprovisionamiento no será automático.**
+
+```bash
+docker cp midpoint-sysconfg.xml callcenter-midpoint:/tmp/midpoint-sysconfg.xml
+docker exec -it -w /opt/midpoint callcenter-midpoint \
+  /opt/midpoint/bin/ninja.sh import -O -i /tmp/midpoint-sysconfg.xml
+```
+
+El output debe terminar con `Processed: 1, error: 0`.
+
+**Listo.** A partir de este punto, cada vez que crees un usuario en midPoint con `Telephone number` y le asignes el rol "AgenteCallCenter", la extensión SIP se aprovisionará automáticamente en Asterisk.
+
+> **⚠️ Nota sobre `sync_asterisk.sh`:** este script de aprovisionamiento manual ya no es necesario para el flujo normal. Solo úsalo si necesitas agregar una extensión sin pasar por midPoint (por ejemplo, para pruebas rápidas). La contraseña SIP que genera el notifier automático sigue el patrón `SIP` + número de extensión + `2026` (ej. extensión `1001` → contraseña `SIP10012026`).
 
 **Si necesitas reiniciar todo desde cero** (por ejemplo, en otra máquina o si algo quedó a medias), borra los volúmenes primero y repite los pasos 1 a 6:
 ```bash
@@ -250,14 +255,13 @@ docker exec -it callcenter-db psql -U callcenter_user -d callcenter --pset pager
 ```
 Confirma que el usuario existe en la base de datos con su estado activo.
 
-### 4. Sincronización de Extensiones Base (Script Directo)
+### 4. Aprovisionamiento manual de emergencia (opcional)
 
-Para extensiones que no requieren pasar por el flujo de midPoint, puedes usar el script directamente:
+El flujo normal es 100% automático vía midPoint. Solo usa el script manual si necesitas agregar una extensión sin pasar por midPoint (por ejemplo, para pruebas rápidas sin usuario en midPoint):
 ```bash
 ./sync_asterisk.sh 1001 clave1001
-./sync_asterisk.sh 1002 clave1002
 ```
-Este script configura las credenciales SIP, actualiza el dialplan con políticas de grabación y recarga el motor SIP de Asterisk en caliente.
+> **Nota:** las extensiones creadas con `sync_asterisk.sh` usan la contraseña que tú indiques. Las creadas vía midPoint usan automáticamente `SIP` + número + `2026`.
 
 ### 5. Prueba de Concepto (Llamada y Evidencias)
 1. Abre tu Softphone (ej. Zoiper o MicroSIP).
@@ -431,17 +435,30 @@ Síntoma: el output de `run-sql` se corta justo después de "Executing script ..
 
 1. `docker compose up -d` y espera 3-5 min a que midPoint termine de iniciar.
 2. `docker compose ps` → confirma que los 4 contenedores estén `Up` (`db`, `midpoint`, `asterisk`, `cdr-panel`), y que `midpoint` diga `(healthy)`.
-3. **Demo midPoint → Asterisk:**
-   - Crea un nuevo usuario en `http://localhost:8080` → Users → New user → tipo Person
-   - Llena: Name, Given name, Family name, **Telephone number = número de extensión**
-   - Assignments → Role → agrega **AgenteCallCenter** → Save
-   - En terminal: `curl -s -X POST http://localhost:8088/api/provision -H "Content-Type: application/json" -d '{"extension": "NNNN", "password": "claveNNNN"}' | python3 -m json.tool`
-   - Verifica: `docker exec callcenter-asterisk asterisk -rx "pjsip show endpoints" | grep NNNN`
-4. Registra 2-3 softphones (Zoiper/MicroSIP) contra la IP de la VM, puerto 5060 UDP.
+3. **Demo midPoint → Asterisk (flujo automático):**
+   - Abre `http://localhost:8080` → entra con `administrator` / `Callcenter2026!`
+   - Ve a **Users → New user → Person**
+   - Llena los campos:
+     - **Name:** identificador único sin espacios (ej. `jperez`)
+     - **Given name:** nombre real (ej. `Juan`)
+     - **Family name:** apellido real (ej. `Pérez`)
+     - **Telephone number:** número de extensión SIP (ej. `1001`) ← **campo crítico**
+   - Ve a **Assignments → Role** → agrega **AgenteCallCenter** → **Save**
+   - midPoint ejecuta automáticamente el notifier Groovy → la extensión SIP queda configurada en Asterisk
+   - La contraseña SIP generada automáticamente es: `SIP` + número + `2026` (ej. extensión `1001` → `SIP10012026`)
+   - Verifica en terminal: `docker exec callcenter-asterisk asterisk -rx "pjsip show endpoints" | grep 1001`
+4. Registra los softphones (Zoiper/MicroSIP) con los datos generados:
+   - **Servidor:** IP de la VM (ver con `ip addr show | grep "inet " | grep -v 127`)
+   - **Usuario:** el Telephone number (ej. `1001`)
+   - **Contraseña:** `SIP10012026`
+   - **Puerto:** 5060 UDP
 5. Haz una llamada de prueba y contéstala (para generar CDR + grabación).
-6. Abre `http://localhost:8088` y muestra la llamada en la tabla, reproduce el audio con el botón ▶.
+6. Abre `http://localhost:8088` → muestra las métricas, las extensiones en tiempo real y reproduce la grabación con ▶.
 7. Muestra auditoría ISO 27001 en `http://localhost:8080` → reportes de acceso.
-8. Para mostrar verbosidad técnica en vivo: `docker exec callcenter-asterisk asterisk -rx "core set verbose 5"` y muestra los logs durante una llamada.
+8. Para mostrar verbosidad técnica en vivo durante una llamada:
+```bash
+docker logs -f callcenter-midpoint 2>&1 | grep -i "SIP provision\|HTTP 200"
+```
 
 ## 🧪 9. Pruebas Unitarias (Quality Assurance)
 
