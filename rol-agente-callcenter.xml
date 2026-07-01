@@ -1,7 +1,60 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<objects xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3">
+<objects xmlns="http://midpoint.evolveum.com/xml/ns/public/common/common-3"
+         xmlns:s="http://midpoint.evolveum.com/xml/ns/public/model/scripting-3">
     <role oid="11111111-2222-3333-4444-555555555555">
         <name>AgenteCallCenter</name>
         <description>Rol para agentes del call center. Al asignarse, provisiona automaticamente una extension SIP en Asterisk via CDR Panel API.</description>
+        <inducement>
+            <policyRule>
+                <name>provisionar-sip-al-asignar</name>
+                <policyConstraints>
+                    <assignment>
+                        <operation>add</operation>
+                    </assignment>
+                </policyConstraints>
+                <policyActions>
+                    <scriptExecution>
+                        <executeScript>
+                            <s:execute>
+                                <s:script>
+                                    <expressionProfile>permissive</expressionProfile>
+                                    <code>
+import groovy.json.JsonOutput
+import java.net.HttpURLConnection
+import java.net.URL
+
+def extension = focus.asObjectable().getTelephoneNumber()
+if (!extension) {
+    log.warn("Usuario sin telephoneNumber, no se puede provisionar extension SIP")
+    return
+}
+def password = 'SIP' + extension + '2026!'
+log.info("Aprovisionando extension SIP {} para usuario {}", extension, focus.asObjectable().getName())
+
+def url = new URL('http://callcenter-cdr-panel:5000/api/provision')
+def conn = (HttpURLConnection) url.openConnection()
+conn.setRequestMethod('POST')
+conn.setRequestProperty('Content-Type', 'application/json')
+conn.setDoOutput(true)
+conn.setConnectTimeout(10000)
+conn.setReadTimeout(15000)
+
+def body = JsonOutput.toJson([extension: extension, password: password])
+conn.outputStream.withWriter('UTF-8') { it.write(body) }
+
+def code = conn.responseCode
+if (code == 200 || code == 201) {
+    log.info("Extension {} aprovisionada correctamente en Asterisk", extension)
+} else {
+    log.warn("Error aprovisionando extension {}: HTTP {}", extension, code)
+}
+                                    </code>
+                                </s:script>
+                            </s:execute>
+                        </executeScript>
+                    </scriptExecution>
+                </policyActions>
+            </policyRule>
+        </inducement>
     </role>
 </objects>
